@@ -21,30 +21,34 @@ impl Summary {
         }
     }
 
-    /// Insert a single new sample to the structure
+    /// Insert a new value into the summary
+    /// The summary is compressed from time to time to keep only some samples
     pub fn insert(&mut self, value: f64) {
-        self.num += 1;
+        let compress_frequency = (1. / (2. * self.epsilon)).ceil() as usize;
+        if self.num > 0 && self.num % compress_frequency == 0 {
+            self.compress();
+        }
+        self.insert_without_compression(value);
+    }
 
-        // Special case: new minimum
-        if self.samples.len() == 0 || value < self.samples[0].value {
-            self.samples.insert(0, Sample::new(value, 0));
-            return;
+    /// Query the structure for a given epsilon-approximate quantile
+    /// Return None if and only if no value was inserted
+    pub fn query(&self, quantile: f64) -> Option<f64> {
+        // Note: unlike the original article, this operation will return the
+        // closest tuple instead of the least one when there are multiple possible
+        // answers
+        if self.num == 0 {
+            return None;
         }
 
-        // Special case: new maximum
-        if value >= self.samples.last().unwrap().value {
-            self.samples.push(Sample::new(value, 0));
-            return;
-        }
-
-        // Find point of insertion `i` such that:
-        // v[i-1] <= value < v[i]
-        // TODO: use binary search?
-        for (i, sample) in self.samples.iter().enumerate().skip(1) {
-            if value < sample.value {
-                let delta = (2. * self.epsilon * self.num as f64).floor() as usize;
-                self.samples.insert(i, Sample::new(value, delta));
-                return;
+        let rank = quantile_to_rank(quantile, self.num);
+        let mut min_rank: usize = 0;
+        let max_err = (self.epsilon * self.num as f64).floor() as usize;
+        for sample in &self.samples {
+            min_rank += sample.g;
+            let max_rank = min_rank + sample.delta;
+            if rank <= max_err + min_rank && max_rank <= max_err + rank {
+                return Some(sample.value);
             }
         }
 
@@ -53,7 +57,7 @@ impl Summary {
 
     /// Compress the current summary, so that it will probably use less memory
     /// but still answer to any quantile query within the desired error margin
-    pub fn compress(&mut self) {
+    fn compress(&mut self) {
         let compression_threshold = (2. * self.epsilon * self.num as f64).floor() as usize;
         self.update_bands(compression_threshold);
 
@@ -84,24 +88,30 @@ impl Summary {
         }
     }
 
-    /// Query the structure for a given epsilon-approximate quantile
-    /// Return None if and only if no value was inserted
-    pub fn query(&self, quantile: f64) -> Option<f64> {
-        // Note: unlike the original article, this operation will return the
-        // closest tuple instead of the least one when there are multiple possible
-        // answers
-        if self.num == 0 {
-            return None;
+    /// Insert a single new sample to the structure
+    fn insert_without_compression(&mut self, value: f64) {
+        self.num += 1;
+
+        // Special case: new minimum
+        if self.samples.len() == 0 || value < self.samples[0].value {
+            self.samples.insert(0, Sample::new(value, 0));
+            return;
         }
 
-        let rank = quantile_to_rank(quantile, self.num);
-        let mut min_rank: usize = 0;
-        let max_err = (self.epsilon * self.num as f64).floor() as usize;
-        for sample in &self.samples {
-            min_rank += sample.g;
-            let max_rank = min_rank + sample.delta;
-            if rank <= max_err + min_rank && max_rank <= max_err + rank {
-                return Some(sample.value);
+        // Special case: new maximum
+        if value >= self.samples.last().unwrap().value {
+            self.samples.push(Sample::new(value, 0));
+            return;
+        }
+
+        // Find point of insertion `i` such that:
+        // v[i-1] <= value < v[i]
+        // TODO: use binary search?
+        for (i, sample) in self.samples.iter().enumerate().skip(1) {
+            if value < sample.value {
+                let delta = (2. * self.epsilon * self.num as f64).floor() as usize;
+                self.samples.insert(i, Sample::new(value, delta));
+                return;
             }
         }
 
@@ -176,20 +186,23 @@ impl fmt::Debug for Summary {
         )?;
         writeln!(
             f,
-            "  {:>20}{:>10}{:>10}{:>8}{:>8}",
-            "value", "[min_rank", "max_rank]", "g", "delta"
+            "  {:>20}{:>10}{:>10}{:>8}{:>8}{:>10}{:>10}",
+            "value", "[min_rank", "max_rank]", "g", "delta", "[min_query", "max_query]"
         )?;
         let mut min_rank = 0;
+        let max_err = (self.epsilon * self.num as f64).floor() as usize;
         for sample in &self.samples {
             min_rank += sample.g;
             writeln!(
                 f,
-                "  {:>20}{:>10}{:>10}{:>8}{:>8}",
+                "  {:>20}{:>10}{:>10}{:>8}{:>8}{:>10}{:>10}",
                 sample.value,
                 min_rank,
                 min_rank + sample.delta,
                 sample.g,
-                sample.delta
+                sample.delta,
+                (min_rank + sample.delta) as i64 - max_err as i64,
+                min_rank + max_err
             )?;
         }
         Ok(())
@@ -205,7 +218,7 @@ mod test {
         let mut s = Summary::new(0.2);
 
         for i in 0..10 {
-            s.insert(i as f64);
+            s.insert_without_compression(i as f64);
         }
 
         assert_eq!(s.samples.len(), 10);
@@ -221,10 +234,10 @@ mod test {
     fn unordered_insertion() {
         let mut s = Summary::new(0.2);
 
-        s.insert(0.);
-        s.insert(9.);
+        s.insert_without_compression(0.);
+        s.insert_without_compression(9.);
         for i in 1..9 {
-            s.insert(i as f64);
+            s.insert_without_compression(i as f64);
         }
 
         assert_eq!(s.samples.len(), 10);
@@ -324,7 +337,7 @@ mod test {
     fn query_full() {
         let mut s = Summary::new(0.001);
         for i in 0..20 {
-            s.insert(i as f64);
+            s.insert_without_compression(i as f64);
         }
         for i in 0..20 {
             assert_eq!(s.query((i + 1) as f64 / 20.), Some(i as f64));

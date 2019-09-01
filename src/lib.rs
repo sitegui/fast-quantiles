@@ -38,6 +38,20 @@ pub fn quantile_to_rank(quantile: f64, num: usize) -> usize {
     ((quantile * num as f64).ceil() as usize).max(1)
 }
 
+// Reverse quantile_to_rank()
+pub fn rank_to_quantile(rank: usize, num: usize) -> f64 {
+    assert!(
+        rank > 0 && rank <= num,
+        "Invalid rank {}: out of range",
+        rank
+    );
+    if rank == 1 {
+        0.
+    } else {
+        rank as f64 / num as f64
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -61,13 +75,38 @@ mod test {
 
     #[test]
     #[should_panic]
-    fn too_small() {
+    fn quantile_too_small() {
         quantile_to_rank(-E, 4);
     }
 
     #[test]
     #[should_panic]
-    fn too_big() {
+    fn quantile_too_big() {
         quantile_to_rank(1. + E, 4);
+    }
+
+    #[test]
+    fn test_ranks() {
+        assert_eq!(rank_to_quantile(1, 1), 0.);
+
+        assert_eq!(rank_to_quantile(1, 2), 0.);
+        assert_eq!(rank_to_quantile(2, 2), 1.);
+
+        assert_eq!(rank_to_quantile(1, 4), 0.);
+        assert_eq!(rank_to_quantile(2, 4), 2. / 4.);
+        assert_eq!(rank_to_quantile(3, 4), 3. / 4.);
+        assert_eq!(rank_to_quantile(4, 4), 1.);
+    }
+
+    #[test]
+    #[should_panic]
+    fn rank_too_small() {
+        rank_to_quantile(0, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn rank_too_big() {
+        rank_to_quantile(11, 10);
     }
 }
