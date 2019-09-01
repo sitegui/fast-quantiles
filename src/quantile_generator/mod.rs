@@ -7,8 +7,9 @@ pub use sequential::*;
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::cmp::Ordering;
 
+    use crate::quantile_to_rank;
+    use std::cmp::Ordering;
     #[test]
     fn median() {
         check_all(0.5, 17., 1);
@@ -47,8 +48,8 @@ mod test {
 
         // Calculate observed quantile
         values.sort_by(compare_floats);
-        let rank: usize = (quantile * (num - 1) as f64).ceil() as usize;
-        let actual = values[rank];
+        let rank: usize = quantile_to_rank(quantile, num);
+        let actual = values[rank - 1];
 
         assert_eq!(value, actual, "Sorted values: {:?}", values);
     }

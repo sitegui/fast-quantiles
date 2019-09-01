@@ -1,5 +1,6 @@
-use std::iter::{ExactSizeIterator, FusedIterator};
 
+use crate::quantile_to_rank;
+use std::iter::{ExactSizeIterator, FusedIterator};
 /// An iterator that will generate `num` sequential values and that holds:
 /// rank(x) = ceil(quantile * (num - 1)), where
 /// rank(x) is defined as the number of values strictly smaller than x
@@ -29,10 +30,10 @@ impl SequentialGenerator {
         order: SequentialOrder,
     ) -> SequentialGenerator {
         assert!(num > 0);
-        let rank = (quantile * (num - 1) as f64).ceil() as usize;
+        let rank = quantile_to_rank(quantile, num);
         let (direction, offset) = match order {
-            SequentialOrder::Ascending => (1., -(rank as f64)),
-            _ => (-1., (num - rank) as f64 - 1.),
+            SequentialOrder::Ascending => (1., -(rank as f64) + 1.),
+            _ => (-1., (num - rank) as f64),
         };
         SequentialGenerator {
             value,

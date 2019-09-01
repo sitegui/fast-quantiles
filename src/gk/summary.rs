@@ -1,6 +1,7 @@
 use super::sample::Sample;
-use std::fmt;
 
+use crate::quantile_to_rank;
+use std::fmt;
 /// Implement the algorithm by Greenwald and Khanna in
 /// Space-Efficient Online Computation of Quantile Summaries
 pub struct Summary {
@@ -81,6 +82,30 @@ impl Summary {
             self.samples.drain(first_descendent..=i);
             i -= i - first_descendent;
         }
+    }
+
+    /// Query the structure for a given epsilon-approximate quantile
+    /// Return None if and only if no value was inserted
+    pub fn query(&self, quantile: f64) -> Option<f64> {
+        // Note: unlike the original article, this operation will return the
+        // closest tuple instead of the least one when there are multiple possible
+        // answers
+        if self.num == 0 {
+            return None;
+        }
+
+        let rank = quantile_to_rank(quantile, self.num);
+        let mut min_rank: usize = 0;
+        let max_err = (self.epsilon * self.num as f64).floor() as usize;
+        for sample in &self.samples {
+            min_rank += sample.g;
+            let max_rank = min_rank + sample.delta;
+            if rank <= max_err + min_rank && max_rank <= max_err + rank {
+                return Some(sample.value);
+            }
+        }
+
+        unreachable!();
     }
 
     /// Calculate the band for a given `delta` and `p` = 2 * epsilon * num
@@ -284,6 +309,55 @@ mod test {
                     band
                 );
             }
+        }
+    }
+
+    #[test]
+    fn query_empty() {
+        let s = Summary::new(0.1);
+        for i in 0..=10 {
+            assert_eq!(s.query(i as f64 / 10.), None);
+        }
+    }
+
+    #[test]
+    fn query_full() {
+        let mut s = Summary::new(0.001);
+        for i in 0..20 {
+            s.insert(i as f64);
+        }
+        for i in 0..20 {
+            assert_eq!(s.query((i + 1) as f64 / 20.), Some(i as f64));
+        }
+    }
+
+    #[test]
+    fn query() {
+        // Represent the 20 values (1..=20) with 5 samples
+        let values = vec![1, 2, 4, 7, 11, 16, 20];
+        let gs = vec![1, 1, 2, 3, 4, 5, 4];
+        let samples: Vec<Sample> = values
+            .iter()
+            .zip(gs)
+            .map(|(&value, g)| Sample {
+                value: value as f64,
+                g,
+                delta: 0,
+                band: 0,
+            })
+            .collect();
+        let s = Summary {
+            samples: samples,
+            // max(g + delta) <= 2*epsilon*n
+            epsilon: 5. / (2. * 20.),
+            num: 20,
+        };
+
+        let expected_values = vec![
+            1, 1, 1, 2, 4, 4, 7, 7, 7, 11, 11, 11, 11, 16, 16, 16, 16, 16, 20, 20,
+        ];
+        for (i, &expected) in expected_values.iter().enumerate() {
+            assert_eq!(s.query((i as f64 + 1.) / 20.), Some(expected as f64));
         }
     }
 }

@@ -1,7 +1,8 @@
-use rand::Rng;
+use crate::quantile_to_rank;
 use rand::SeedableRng;
 use rand_pcg::Pcg64;
 use std::iter::{ExactSizeIterator, FusedIterator};
+use rand::Rng;
 
 /// An iterator that will generate `num` random values and that holds:
 /// rank(x) = ceil(quantile * (num - 1)), where
@@ -19,7 +20,7 @@ pub struct RandomGenerator {
 impl RandomGenerator {
     pub fn new(quantile: f64, value: f64, num: usize, seed: u64) -> RandomGenerator {
         assert!(num > 0);
-        let remaining_lesser = (quantile * (num - 1) as f64).ceil() as usize;
+        let remaining_lesser = quantile_to_rank(quantile, num) - 1;
         RandomGenerator {
             remaining_lesser,
             remaining: num - 1,
