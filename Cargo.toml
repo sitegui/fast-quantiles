@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 rand = "0.7.0"
+rand_pcg = "0.2.0"

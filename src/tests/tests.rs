@@ -1,6 +1,5 @@
 use crate::mean::MeanOperation;
 
-use crate::quantile_generator::QuantileGenerator;
 use crate::Operation;
 #[test]
 fn single_entity() {
