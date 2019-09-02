@@ -44,15 +44,21 @@ impl Summary {
         let rank = quantile_to_rank(quantile, self.num);
         let mut min_rank: usize = 0;
         let max_err = (self.epsilon * self.num as f64).floor() as usize;
+        let mut best_sample: (&Sample, f64) = (self.samples.first().unwrap(), std::f64::INFINITY);
         for sample in &self.samples {
             min_rank += sample.g;
             let max_rank = min_rank + sample.delta;
-            if rank <= max_err + min_rank && max_rank <= max_err + rank {
-                return Some(sample.value);
+            let mid = min_rank as f64 + (sample.delta as f64 / 2.).ceil();
+            let error = rank as f64 - mid;
+            if rank <= max_err + min_rank
+                && max_rank <= max_err + rank
+                && error.abs() < best_sample.1.abs()
+            {
+                best_sample = (sample, error);
             }
         }
 
-        unreachable!();
+        Some(best_sample.0.value)
     }
 
     /// Compress the current summary, so that it will probably use less memory
@@ -367,7 +373,7 @@ mod test {
         };
 
         let expected_values = vec![
-            1, 1, 1, 2, 4, 4, 7, 7, 7, 11, 11, 11, 11, 16, 16, 16, 16, 16, 20, 20,
+            1, 2, 2, 4, 4, 7, 7, 7, 7, 11, 11, 11, 11, 16, 16, 16, 16, 16, 20, 20,
         ];
         for (i, &expected) in expected_values.iter().enumerate() {
             assert_eq!(s.query((i as f64 + 1.) / 20.), Some(expected as f64));
