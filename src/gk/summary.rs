@@ -2,8 +2,11 @@ use super::sample::Sample;
 
 use crate::quantile_to_rank;
 use std::fmt;
+
 /// Implement the algorithm by Greenwald and Khanna in
 /// Space-Efficient Online Computation of Quantile Summaries
+/// This is NOT meant to be a performant implementation, but instead a correct
+/// baseline, against which more performant variants can be tested
 pub struct Summary {
     samples: Vec<Sample>,
     /// Maximum error

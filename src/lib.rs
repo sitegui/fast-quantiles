@@ -1,6 +1,3 @@
-#[cfg(test)]
-mod tests;
-
 pub mod mean;
 
 pub mod quantile_generator;

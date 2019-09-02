@@ -1,5 +1,5 @@
 [package]
-name = "space-efficient-quantile"
+name = "space_efficient_quantile"
 version = "0.1.0"
 authors = ["Guilherme <sitegui@sitegui.com.br>"]
 edition = "2018"
@@ -7,3 +7,10 @@ edition = "2018"
 [dependencies]
 rand = "0.7.0"
 rand_pcg = "0.2.0"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false

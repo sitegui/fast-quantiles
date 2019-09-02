@@ -51,10 +51,10 @@ mod test {
         check(0.2, 1000);
         check(0.2, 10000);
 
-        // check(0.01, 10);
-        // check(0.01, 100);
-        // check(0.01, 1000);
-        // check(0.01, 10000);
+        check(0.01, 10);
+        check(0.01, 100);
+        check(0.01, 1000);
+        check(0.01, 10000);
     }
 
     fn consume_generator<T>(gen: T, s: &mut Summary) -> Vec<f64>
