@@ -2,7 +2,7 @@ use std::cmp::{Eq, Ord, Ordering, PartialEq, PartialOrd};
 
 /// Represent each saved sample
 /// For ordering, only the field `value` is considered
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Sample {
     pub value: f64,
     pub g: usize,

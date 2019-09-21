@@ -7,6 +7,7 @@ use std::fmt;
 /// Space-Efficient Online Computation of Quantile Summaries
 /// This is NOT meant to be a performant implementation, but instead a correct
 /// baseline, against which more performant variants can be tested
+#[derive(Clone)]
 pub struct Summary {
     samples: Vec<Sample>,
     /// Maximum error
@@ -62,6 +63,26 @@ impl Summary {
         }
 
         Some(best_sample.0.value)
+    }
+
+    /// Merge another summary into this oen
+    pub fn merge(&mut self, other: &mut Summary) {
+        assert_eq!(
+            self.epsilon, other.epsilon,
+            "Both Summary epsilons must be the same"
+        );
+
+        // Add all other samples and sort by value
+        self.compress();
+        other.compress();
+        self.samples.extend(&other.samples);
+        self.samples.sort();
+        self.num += other.num;
+        self.compress();
+    }
+
+    pub fn get_num(&self) -> usize {
+        self.num
     }
 
     /// Compress the current summary, so that it will probably use less memory
