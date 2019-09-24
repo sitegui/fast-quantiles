@@ -4,6 +4,8 @@ pub mod quantile_generator;
 
 pub mod gk;
 
+pub mod modified_gk;
+
 pub trait Operation {
     type Item;
     type Output;
