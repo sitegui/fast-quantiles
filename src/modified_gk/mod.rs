@@ -1,4 +1,3 @@
-mod sample;
 mod summary;
 mod summary_writer;
 
