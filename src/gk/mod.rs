@@ -160,7 +160,9 @@ mod test {
         let num = s.get_num();
 
         for desired_rank in 1..=num {
-            let queried = s.query(rank_to_quantile(desired_rank, num)).unwrap();
+            let queried = s
+                .query(rank_to_quantile(desired_rank as u64, num as u64))
+                .unwrap();
             let got_rank = values.iter().position(|&v| v == queried).unwrap() + 1;
             let error = (got_rank as f64 - desired_rank as f64) / num as f64;
             if error.abs() > max_error.0.abs() {

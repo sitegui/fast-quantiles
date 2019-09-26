@@ -20,7 +20,7 @@ pub struct RandomGenerator {
 impl RandomGenerator {
     pub fn new(quantile: f64, value: f64, num: usize, seed: u64) -> RandomGenerator {
         assert!(num > 0);
-        let remaining_lesser = quantile_to_rank(quantile, num) - 1;
+        let remaining_lesser = quantile_to_rank(quantile, num as u64) as usize - 1;
         RandomGenerator {
             remaining_lesser,
             remaining: num - 1,

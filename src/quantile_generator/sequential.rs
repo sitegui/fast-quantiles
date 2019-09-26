@@ -30,7 +30,7 @@ impl SequentialGenerator {
         order: SequentialOrder,
     ) -> SequentialGenerator {
         assert!(num > 0);
-        let rank = quantile_to_rank(quantile, num);
+        let rank = quantile_to_rank(quantile, num as u64) as usize;
         let (direction, offset) = match order {
             SequentialOrder::Ascending => (1., -(rank as f64) + 1.),
             _ => (-1., (num - rank) as f64),

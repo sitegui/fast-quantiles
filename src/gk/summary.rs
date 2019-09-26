@@ -45,7 +45,7 @@ impl Summary {
             return None;
         }
 
-        let rank = quantile_to_rank(quantile, self.num);
+        let rank = quantile_to_rank(quantile, self.num as u64) as usize;
         let mut min_rank: usize = 0;
         let max_err = (self.epsilon * self.num as f64).floor() as usize;
         let mut best_sample: (&Sample, f64) = (self.samples.first().unwrap(), std::f64::INFINITY);

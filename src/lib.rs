@@ -28,17 +28,17 @@ pub trait Operation {
 /// (1/4, 2/4] -> 2
 /// (2/4, 3/4] -> 3
 /// (3/4, 1]   -> 4
-pub fn quantile_to_rank(quantile: f64, num: usize) -> usize {
+pub fn quantile_to_rank(quantile: f64, num: u64) -> u64 {
     assert!(
         quantile >= 0. && quantile <= 1.,
         "Invalid quantile {}: out of range",
         quantile
     );
-    ((quantile * num as f64).ceil() as usize).max(1)
+    ((quantile * num as f64).ceil() as u64).max(1)
 }
 
 // Reverse quantile_to_rank()
-pub fn rank_to_quantile(rank: usize, num: usize) -> f64 {
+pub fn rank_to_quantile(rank: u64, num: u64) -> f64 {
     assert!(
         rank > 0 && rank <= num,
         "Invalid rank {}: out of range",

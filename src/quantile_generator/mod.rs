@@ -48,7 +48,7 @@ mod test {
 
         // Calculate observed quantile
         values.sort_by(compare_floats);
-        let rank: usize = quantile_to_rank(quantile, num);
+        let rank: usize = quantile_to_rank(quantile, num as u64) as usize;
         let actual = values[rank - 1];
 
         assert_eq!(value, actual, "Sorted values: {:?}", values);

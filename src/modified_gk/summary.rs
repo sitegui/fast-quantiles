@@ -1,3 +1,5 @@
+use crate::quantile_to_rank;
+
 /// Represent each saved sample
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct Sample<T: Ord> {
@@ -15,7 +17,7 @@ pub struct Summary<T: Ord> {
     /// Maximum error
     max_expected_error: f64,
     /// Number of samples already seen
-    num: u64,
+    len: u64,
 }
 
 impl<T: Ord> Summary<T> {
@@ -24,7 +26,7 @@ impl<T: Ord> Summary<T> {
         Summary {
             samples: Vec::new(),
             max_expected_error,
-            num: 0,
+            len: 0,
         }
     }
 
@@ -35,7 +37,7 @@ impl<T: Ord> Summary<T> {
         let insert_at = self.samples.iter().position(|sample| sample.value > value);
 
         // Insert
-        self.num += 1;
+        self.len += 1;
         match insert_at {
             None => {
                 // value is larger than everything -> new max
@@ -47,7 +49,6 @@ impl<T: Ord> Summary<T> {
             }
             Some(0) => {
                 // new minimum
-                println!("some(0)");
                 self.samples.insert(
                     0,
                     Sample {
@@ -58,7 +59,6 @@ impl<T: Ord> Summary<T> {
                 );
             }
             Some(pos) => {
-                println!("some(pos={})", pos);
                 let cap = self.max_g_delta();
                 let sample = &mut self.samples[pos];
 
@@ -75,8 +75,7 @@ impl<T: Ord> Summary<T> {
 
         // Compress every time max_g_delta() increases
         let compress_frequency = (1. / (2. * self.max_expected_error)).ceil() as u64;
-        if self.num % compress_frequency == 0 {
-            println!("compress");
+        if self.len % compress_frequency == 0 {
             self.compress()
         }
     }
@@ -87,13 +86,44 @@ impl<T: Ord> Summary<T> {
     }
 
     /// Query to a desired quantile
-    pub fn query(&self, q: f64) -> Option<T> {
-        unimplemented!();
+    /// Return None if and only if the summary is empty
+    pub fn query(&self, q: f64) -> Option<&T> {
+        self.query_with_error(q).map(|(value, _error)| value)
     }
 
     /// Query to a desired quantile and return the query maximum error
-    pub fn query_with_error(&self, q: f64) -> Option<(T, f64)> {
-        unimplemented!();
+    /// Return None if and only if the summary is empty
+    pub fn query_with_error(&self, q: f64) -> Option<(&T, f64)> {
+        if self.len == 0 {
+            return None;
+        }
+
+        // Find the sample with the smallest maximum rank error
+        let target_rank = quantile_to_rank(q, self.len);
+        let mut min_rank = 0;
+        let mut best_max_rank_error = std::u64::MAX;
+        let mut best_value = None;
+        for sample in &self.samples {
+            // This sample's rank is in [min_rank, max_rank] (inclusive in both sides)
+            min_rank += sample.g;
+            let max_rank = min_rank + sample.delta;
+            let mid_rank = (min_rank + max_rank) / 2;
+
+            // In the worst case, the correct sample's rank is at the opposite extremity
+            let max_rank_error = if target_rank > mid_rank {
+                target_rank - min_rank
+            } else {
+                max_rank - target_rank
+            };
+
+            if max_rank_error < best_max_rank_error {
+                best_max_rank_error = max_rank_error;
+                best_value = Some(&sample.value);
+            }
+        }
+
+        // .unwrap() is guaranteed to work, since for() executed at least once
+        Some((best_value.unwrap(), best_max_rank_error as f64 / self.len as f64))
     }
 
     /// Get the maximum desired error
@@ -101,21 +131,16 @@ impl<T: Ord> Summary<T> {
         self.max_expected_error
     }
 
-    /// Get the maximum possible error in the current state
-    pub fn max_current_error(&self) -> f64 {
-        unimplemented!();
-    }
-
     /// Get the number of inserted values
-    pub fn num(&self) -> u64 {
-        self.num
+    pub fn len(&self) -> u64 {
+        self.len
     }
 
     /// Get the current limit on g+delta
     /// An invariant of this structure is that:
     /// max(sample.g + sample.delta) <= max_g_delta, for all samples
     fn max_g_delta(&self) -> u64 {
-        return (2. * self.max_expected_error * self.num as f64).floor() as u64;
+        return (2. * self.max_expected_error * self.len as f64).floor() as u64;
     }
 
     /// Apply an inplace compression: search for sample to "forget"
@@ -140,11 +165,9 @@ impl<T: Ord> Summary<T> {
 
             if sample_g + sample_delta + new_g <= cap {
                 // Include this sample in the current compressed block
-                println!("add to block {}", i);
                 new_g += sample_g;
             } else {
                 // Commit the current compression block
-                println!("commit {}", insertion);
                 self.samples.swap(insertion, i - 1);
                 self.samples[insertion].g = new_g;
                 new_g = sample_g;
@@ -153,7 +176,6 @@ impl<T: Ord> Summary<T> {
         }
 
         // Commit last compression block
-        println!("final commit {}", insertion);
         let last_i = self.samples.len() - 1;
         self.samples.swap(insertion, last_i);
         self.samples[insertion].g = new_g;
@@ -169,7 +191,7 @@ mod test {
     use std::fmt::Debug;
 
     #[test]
-    fn insert_ones() {
+    fn insert_ones_and_query() {
         // insert [8, 6, 0, 4, 3, 9, 2, 5, 1, 7] one by one
         let mut summary = Summary::new(0.2);
 
@@ -225,9 +247,27 @@ mod test {
             vec![(0, 1, 0), (2, 2, 1), (4, 2, 0), (8, 4, 0), (9, 1, 0)],
         );
 
-        // compression (cap=4)
+        // Compression (cap=4)
         summary.compress();
         assert_samples(&summary, vec![(0, 1, 0), (4, 4, 0), (8, 4, 0), (9, 1, 0)]);
+
+        // Query all ranks
+        let check_rank = |rank, expected_value, rank_error| {
+            let q = crate::rank_to_quantile(rank, summary.len());
+            let (&value, error) = summary.query_with_error(q).unwrap();
+            assert_eq!(expected_value, value);
+            assert_eq!(rank_error as f64 / summary.len() as f64, error);
+        };
+        check_rank(1, 0, 0);
+        check_rank(2, 0, 1);
+        check_rank(3, 0, 2);
+        check_rank(4, 4, 1);
+        check_rank(5, 4, 0);
+        check_rank(6, 4, 1);
+        check_rank(7, 4, 2);
+        check_rank(8, 8, 1);
+        check_rank(9, 8, 0);
+        check_rank(10, 9, 0);
     }
 
     fn assert_samples<T: Ord + Debug + Copy>(summary: &Summary<T>, samples: Vec<(T, u64, u64)>) {
