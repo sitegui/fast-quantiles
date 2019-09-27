@@ -1,12 +1,7 @@
+use super::incoming_merge_state::IncomingMergeState;
+use super::sample::Sample;
+use super::samples_compressor::SamplesCompressor;
 use crate::quantile_to_rank;
-
-/// Represent each saved sample
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct Sample<T: Ord> {
-    value: T,
-    g: u64,
-    delta: u64,
-}
 
 /// Implement a modified version of the algorithm by Greenwald and Khanna in
 /// Space-Efficient Online Computation of Quantile Summaries
@@ -81,8 +76,13 @@ impl<T: Ord> Summary<T> {
     }
 
     /// Merge another Summary into this one
-    pub fn merge(&mut self, other: &Summary<T>) {
-        unimplemented!();
+    pub fn merge(&mut self, other: Summary<T>) {
+        assert!(
+            other.max_expected_error <= self.max_expected_error,
+            "The incoming Summary must have an equal or smaller max_expected_error"
+        );
+        let other_capacity = other.samples.capacity();
+        self.merge_sorted_samples(other.samples.into_iter(), other.len, other_capacity);
     }
 
     /// Query to a desired quantile
@@ -123,7 +123,10 @@ impl<T: Ord> Summary<T> {
         }
 
         // .unwrap() is guaranteed to work, since for() executed at least once
-        Some((best_value.unwrap(), best_max_rank_error as f64 / self.len as f64))
+        Some((
+            best_value.unwrap(),
+            best_max_rank_error as f64 / self.len as f64,
+        ))
     }
 
     /// Get the maximum desired error
@@ -143,45 +146,67 @@ impl<T: Ord> Summary<T> {
         return (2. * self.max_expected_error * self.len as f64).floor() as u64;
     }
 
-    /// Apply an inplace compression: search for sample to "forget"
+    /// Apply an inplace compression: search for samples to "forget"
     fn compress(&mut self) {
-        if self.samples.len() <= 2 {
-            // Minimum and maximum are always kept
-            return;
+        let mut compressor = SamplesCompressor::new(self.max_g_delta(), self.samples.capacity());
+        let samples = std::mem::replace(&mut self.samples, Vec::with_capacity(0));
+        for sample in samples {
+            compressor.push(sample);
         }
+        self.samples = compressor.into_samples();
+    }
 
-        // Look at each sample and compress with previous ones if possible
-        // This is an inplace algorithm that will move the samples to drop to the end
-        // of the vector, then the vector will be trimmed to the final size
-        let mut new_g = self.samples[1].g; // new g value for next compressed block
-        let mut insertion = 1; // next sample insertion point
-        let cap = self.max_g_delta();
-        for i in 2..self.samples.len() {
-            let Sample {
-                g: sample_g,
-                delta: sample_delta,
-                ..
-            } = self.samples[i];
+    fn merge_sorted_samples<I>(&mut self, other_samples: I, other_len: u64, other_capacity: usize)
+    where
+        I: Iterator<Item = Sample<T>> + ExactSizeIterator + From<std::vec::IntoIter<Sample<T>>>,
+    {
+        // Create a streaming compressor
+        self.len += other_len;
+        let capacity = self.samples.capacity().max(other_capacity);
+        let max_g_delta = self.max_g_delta();
+        let mut compressor = SamplesCompressor::new(max_g_delta, capacity);
 
-            if sample_g + sample_delta + new_g <= cap {
-                // Include this sample in the current compressed block
-                new_g += sample_g;
-            } else {
-                // Commit the current compression block
-                self.samples.swap(insertion, i - 1);
-                self.samples[insertion].g = new_g;
-                new_g = sample_g;
-                insertion += 1;
+        // Get current samples as iterator
+        // Note the use of replace() since T may not implement Copy nor Clone
+        let self_samples =
+            I::from(std::mem::replace(&mut self.samples, Vec::with_capacity(0)).into_iter());
+
+        // Prepare state for merge
+        let mut other_input = IncomingMergeState::new(other_samples);
+        let mut self_input = IncomingMergeState::new(self_samples);
+
+        // Bring the least from each iterator until one of them ends
+        let remaining;
+        loop {
+            match (self_input.peek(), other_input.peek()) {
+                // Nothing to merge from one of the sides
+                (None, _) => {
+                    remaining = other_input;
+                    break;
+                }
+                (_, None) => {
+                    remaining = self_input;
+                    break;
+                }
+                (Some(self_peeked), Some(other_peeked)) => {
+                    // Detect from which input to consume next and from which not to
+                    let (next_input, next_not_input) = if self_peeked.value < other_peeked.value {
+                        (&mut self_input, &other_input)
+                    } else {
+                        (&mut other_input, &self_input)
+                    };
+
+                    // Push new sample
+                    let mut new_sample = next_input.pop_front();
+                    new_sample.delta += next_not_input.aditional_delta();
+                    compressor.push(new_sample);
+                }
             }
         }
 
-        // Commit last compression block
-        let last_i = self.samples.len() - 1;
-        self.samples.swap(insertion, last_i);
-        self.samples[insertion].g = new_g;
-
-        // Drop forgotten samples
-        self.samples.truncate(insertion + 1);
+        // Move remaining values
+        self.samples = compressor.into_samples();
+        remaining.push_remaining_to(&mut self.samples);
     }
 }
 
