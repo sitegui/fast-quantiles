@@ -18,14 +18,17 @@ pub struct Summary<T: Ord> {
 impl<T: Ord> Summary<T> {
     /// Create a new empty Summary
     pub fn new(max_expected_error: f64) -> Summary<T> {
+        // In the worst-case scenario, we'll hold twice the number of samples to
+        // answer to quantile queries at the desired precision
+        let expected_capacity = (1. / max_expected_error).ceil() as usize;
         Summary {
-            samples: Vec::new(),
+            samples: Vec::with_capacity(expected_capacity),
             max_expected_error,
             len: 0,
         }
     }
 
-    /// Insert a single new value into the Summary
+    /// Insert a single new value into the Summary using an algorithm with runtime complexity of O(N)
     /// If you want to insert many values with a higher performance, use SummaryWriter
     pub fn insert_one(&mut self, value: T) {
         // Find first index such that sample[i] > value
@@ -35,7 +38,7 @@ impl<T: Ord> Summary<T> {
         self.len += 1;
         match insert_at {
             None => {
-                // value is larger than everything -> new max
+                // Value is larger than everything -> new max
                 self.samples.push(Sample {
                     value,
                     g: 1,
@@ -43,7 +46,7 @@ impl<T: Ord> Summary<T> {
                 });
             }
             Some(0) => {
-                // new minimum
+                // New minimum
                 self.samples.insert(
                     0,
                     Sample {
@@ -85,48 +88,42 @@ impl<T: Ord> Summary<T> {
         self.merge_sorted_samples(other.samples.into_iter(), other.len, other_capacity);
     }
 
-    /// Query to a desired quantile
+    /// Query for a desired quantile
     /// Return None if and only if the summary is empty
     pub fn query(&self, q: f64) -> Option<&T> {
         self.query_with_error(q).map(|(value, _error)| value)
     }
 
-    /// Query to a desired quantile and return the query maximum error
+    /// Query for a desired quantile and return the query maximum error
     /// Return None if and only if the summary is empty
-    pub fn query_with_error(&self, q: f64) -> Option<(&T, f64)> {
-        if self.len == 0 {
-            return None;
-        }
-
+    pub fn query_with_error(&self, quantile: f64) -> Option<(&T, f64)> {
         // Find the sample with the smallest maximum rank error
-        let target_rank = quantile_to_rank(q, self.len);
+
+        let target_rank = quantile_to_rank(quantile, self.len);
         let mut min_rank = 0;
-        let mut best_max_rank_error = std::u64::MAX;
-        let mut best_value = None;
-        for sample in &self.samples {
-            // This sample's rank is in [min_rank, max_rank] (inclusive in both sides)
-            min_rank += sample.g;
-            let max_rank = min_rank + sample.delta;
-            let mid_rank = (min_rank + max_rank) / 2;
 
-            // In the worst case, the correct sample's rank is at the opposite extremity
-            let max_rank_error = if target_rank > mid_rank {
-                target_rank - min_rank
-            } else {
-                max_rank - target_rank
-            };
+        self.samples
+            .iter()
+            // For each sample, calculate the maximum rank error if we choose it as the answer
+            .map(|sample| {
+                // This sample's rank is in [min_rank, max_rank] (inclusive in both sides)
+                min_rank += sample.g;
+                let max_rank = min_rank + sample.delta;
+                let mid_rank = (min_rank + max_rank) / 2;
 
-            if max_rank_error < best_max_rank_error {
-                best_max_rank_error = max_rank_error;
-                best_value = Some(&sample.value);
-            }
-        }
+                // In the worst case, the correct sample's rank is at the opposite extremity
+                let max_rank_error = if target_rank > mid_rank {
+                    target_rank - min_rank
+                } else {
+                    max_rank - target_rank
+                };
 
-        // .unwrap() is guaranteed to work, since for() executed at least once
-        Some((
-            best_value.unwrap(),
-            best_max_rank_error as f64 / self.len as f64,
-        ))
+                (sample, max_rank_error)
+            })
+            // Grab the best answer
+            .min_by_key(|&(_sample, max_rank_error)| max_rank_error)
+            // Output values consistent with the public API (the value and quantile error)
+            .map(|(sample, rank_error)| (&sample.value, rank_error as f64 / self.len as f64))
     }
 
     /// Get the maximum desired error
@@ -146,67 +143,78 @@ impl<T: Ord> Summary<T> {
         return (2. * self.max_expected_error * self.len as f64).floor() as u64;
     }
 
-    /// Apply an inplace compression: search for samples to "forget"
+    /// Compress the samples: search for samples to "forget"
     fn compress(&mut self) {
+        // Use a streaming logic that will build a new vector of samples
+        // NB: this algorithm could be rewritten so that it changes the samples inplace,
+        // however I've opted for sharing the same underlying implementation of merge()
         let mut compressor = SamplesCompressor::new(self.max_g_delta(), self.samples.capacity());
+
+        // Consume the samples (since T may not implement Copy, we temporally place a zero vector)
         let samples = std::mem::replace(&mut self.samples, Vec::with_capacity(0));
         for sample in samples {
             compressor.push(sample);
         }
+
         self.samples = compressor.into_samples();
     }
 
-    fn merge_sorted_samples<I>(&mut self, other_samples: I, other_len: u64, other_capacity: usize)
-    where
-        I: Iterator<Item = Sample<T>> + ExactSizeIterator + From<std::vec::IntoIter<Sample<T>>>,
+    /// Merge a source of sorted samples into this Summary
+    /// `other_len` is the number of values represented by the samples, that is, the sum of all its `g` values
+    /// `other_capacity` is the minimum capacity for the final merged samples vector
+    pub(crate) fn merge_sorted_samples<I>(
+        &mut self,
+        other_samples: I,
+        other_len: u64,
+        other_capacity: usize,
+    ) where
+        I: Iterator<Item = Sample<T>>,
     {
         // Create a streaming compressor
+        // Note the use of the largest capacity to avoid reallocs in final vector
         self.len += other_len;
         let capacity = self.samples.capacity().max(other_capacity);
         let max_g_delta = self.max_g_delta();
         let mut compressor = SamplesCompressor::new(max_g_delta, capacity);
 
         // Get current samples as iterator
-        // Note the use of replace() since T may not implement Copy nor Clone
-        let self_samples =
-            I::from(std::mem::replace(&mut self.samples, Vec::with_capacity(0)).into_iter());
+        // Note the use of replace() since T may not implement Copy
+        // Besides, a zero-capacity vector does not call alloc(), that's cool
+        let self_samples = std::mem::replace(&mut self.samples, Vec::with_capacity(0)).into_iter();
 
         // Prepare state for merge
         let mut other_input = IncomingMergeState::new(other_samples);
         let mut self_input = IncomingMergeState::new(self_samples);
 
         // Bring the least from each iterator until one of them ends
-        let remaining;
         loop {
             match (self_input.peek(), other_input.peek()) {
-                // Nothing to merge from one of the sides
+                // Nothing to merge from one of the sides: move remaining values
                 (None, _) => {
-                    remaining = other_input;
+                    other_input.push_remaining_to(&mut compressor);
+                    self.samples = compressor.into_samples();
                     break;
                 }
                 (_, None) => {
-                    remaining = self_input;
+                    self_input.push_remaining_to(&mut compressor);
+                    self.samples = compressor.into_samples();
                     break;
                 }
                 (Some(self_peeked), Some(other_peeked)) => {
-                    // Detect from which input to consume next and from which not to
-                    let (next_input, next_not_input) = if self_peeked.value < other_peeked.value {
-                        (&mut self_input, &other_input)
+                    // Detect from which input to consume next and prepare the next sample
+                    let mut new_sample;
+                    if self_peeked.value < other_peeked.value {
+                        new_sample = self_input.pop_front();
+                        new_sample.delta += other_input.aditional_delta();
                     } else {
-                        (&mut other_input, &self_input)
+                        new_sample = other_input.pop_front();
+                        new_sample.delta += self_input.aditional_delta();
                     };
 
-                    // Push new sample
-                    let mut new_sample = next_input.pop_front();
-                    new_sample.delta += next_not_input.aditional_delta();
                     compressor.push(new_sample);
                 }
             }
         }
-
-        // Move remaining values
-        self.samples = compressor.into_samples();
-        remaining.push_remaining_to(&mut self.samples);
     }
 }
 

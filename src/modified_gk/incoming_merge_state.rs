@@ -1,4 +1,5 @@
 use super::sample::Sample;
+use super::samples_compressor::SamplesCompressor;
 
 /// Keep metadata about an incoming iterator of sorted samples
 pub struct IncomingMergeState<T: Ord, I: Iterator<Item = Sample<T>>> {
@@ -36,11 +37,13 @@ impl<T: Ord, I: Iterator<Item = Sample<T>>> IncomingMergeState<T, I> {
         }
     }
 
-    /// Exaust the iterator, moving values to the given vector
-    pub fn push_remaining_to(self, vec: &mut Vec<Sample<T>>) {
+    /// Exaust the iterator, moving values to the given compressor
+    pub fn push_remaining_to(self, compressor: &mut SamplesCompressor<T>) {
         if let Some(sample) = self.next_sample {
-            vec.push(sample);
-            vec.extend(self.iterator);
+            compressor.push(sample);
+            for sample in self.iterator {
+                compressor.push(sample);
+            }
         }
     }
 }
@@ -81,11 +84,13 @@ mod test {
         assert_eq!(incoming.peek(), Some(&sample3));
         assert_eq!(incoming.aditional_delta(), 10);
         assert_eq!(incoming.pop_front(), sample3);
+
+        assert_eq!(incoming.peek(), None);
         assert_eq!(incoming.aditional_delta(), 0);
 
-        let mut empty = Vec::new();
+        let mut empty = SamplesCompressor::new(1, 0);
         incoming.push_remaining_to(&mut empty);
-        assert_eq!(empty, Vec::new());
+        assert_eq!(empty.into_samples(), Vec::new());
     }
 
     #[test]
@@ -96,10 +101,11 @@ mod test {
             delta: 0,
         });
         let incoming = IncomingMergeState::new(samples);
-        let mut empty = Vec::new();
+        let mut empty = SamplesCompressor::new(1, 0);
         incoming.push_remaining_to(&mut empty);
         assert_eq!(
             empty
+                .into_samples()
                 .iter()
                 .map(|sample| sample.value)
                 .collect::<Vec<i32>>(),

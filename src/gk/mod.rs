@@ -21,17 +21,14 @@ mod test {
         check(0.1, 10);
         check(0.1, 100);
         check(0.1, 1000);
-        check(0.1, 10000);
 
         check(0.2, 10);
         check(0.2, 100);
         check(0.2, 1000);
-        check(0.2, 10000);
 
         check(0.01, 10);
         check(0.01, 100);
         check(0.01, 1000);
-        check(0.01, 10000);
     }
 
     #[test]
@@ -52,9 +49,7 @@ mod test {
         s1.merge(&mut s2);
         println!("{:?}", s1);
 
-        let max_error = check_all_ranks(s1, values, 2. * epsilon);
-        println!("{:?}", max_error / epsilon);
-        assert!(max_error > epsilon);
+        check_all_ranks(s1, values, epsilon);
     }
 
     #[test]
@@ -91,9 +86,7 @@ mod test {
         println!("After merge");
         println!("{:?}", s1);
 
-        let max_error = check_all_ranks(s1, values, 8. * epsilon);
-        println!("{:?}", max_error / epsilon);
-        assert!(max_error > 4. * epsilon);
+        check_all_ranks(s1, values, epsilon);
     }
 
     #[test]
@@ -130,9 +123,7 @@ mod test {
         println!("After merge");
         println!("{:?}", s1);
 
-        let max_error = check_all_ranks(s1, values, 8. * epsilon);
-        println!("{:?}", max_error / epsilon);
-        assert!(max_error > 4. * epsilon);
+        check_all_ranks(s1, values, epsilon);
     }
 
     fn consume_generator<T>(gen: T, summaries: &mut [&mut Summary]) -> Vec<f64>
