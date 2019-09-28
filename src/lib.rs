@@ -1,23 +1,6 @@
-pub mod mean;
-
-pub mod quantile_generator;
-
 pub mod gk;
-
 pub mod modified_gk;
-
-pub trait Operation {
-    type Item;
-    type Output;
-
-    fn create() -> Self;
-
-    fn update(&mut self, value: Self::Item);
-
-    fn merge_with(&mut self, other: Self);
-
-    fn finish(self) -> Self::Output;
-}
+pub mod quantile_generator;
 
 /// Convert from quantile to the rank
 /// 0 <= quantile <= 1
