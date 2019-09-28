@@ -1,6 +1,8 @@
-
+use super::OrderedF64;
 use crate::quantile_to_rank;
 use std::iter::{ExactSizeIterator, FusedIterator};
+use super::QuantileGenerator;
+
 /// An iterator that will generate `num` sequential values and that holds:
 /// rank(x) = ceil(quantile * (num - 1)), where
 /// rank(x) is defined as the number of values strictly smaller than x
@@ -46,7 +48,7 @@ impl SequentialGenerator {
 }
 
 impl Iterator for SequentialGenerator {
-    type Item = f64;
+    type Item = OrderedF64;
 
     fn next(&mut self) -> Option<Self::Item> {
         // The terms of the sequence are defined as:
@@ -56,7 +58,7 @@ impl Iterator for SequentialGenerator {
         } else {
             let r = self.value + (self.direction * self.position as f64 + self.offset);
             self.position += 1;
-            Some(r)
+            Some(OrderedF64::from(r))
         }
     }
 
@@ -70,3 +72,4 @@ impl FusedIterator for SequentialGenerator {}
 
 impl ExactSizeIterator for SequentialGenerator {}
 
+impl QuantileGenerator for SequentialGenerator {}

@@ -1,15 +1,20 @@
+mod ordered_f64;
+
+pub trait QuantileGenerator: Iterator<Item = OrderedF64> {}
+
 mod random;
 mod sequential;
 
-pub use random::*;
-pub use sequential::*;
+pub use ordered_f64::OrderedF64;
+pub use random::RandomGenerator;
+pub use sequential::{SequentialGenerator, SequentialOrder};
+
 
 #[cfg(test)]
 mod test {
     use super::*;
 
     use crate::quantile_to_rank;
-    use std::cmp::Ordering;
     #[test]
     fn median() {
         check_all(0.5, 17., 1);
@@ -39,22 +44,15 @@ mod test {
         check_one(it, quantile, value, num);
     }
 
-    fn check_one<T>(gen: T, quantile: f64, value: f64, num: usize)
-    where
-        T: Iterator<Item = f64>,
-    {
+    fn check_one<G: QuantileGenerator>(gen: G, quantile: f64, value: f64, num: usize) {
         // Collect iterator into a vector
-        let mut values: Vec<f64> = gen.collect();
+        let mut values: Vec<_> = gen.collect();
 
         // Calculate observed quantile
-        values.sort_by(compare_floats);
+        values.sort();
         let rank: usize = quantile_to_rank(quantile, num as u64) as usize;
         let actual = values[rank - 1];
 
-        assert_eq!(value, actual, "Sorted values: {:?}", values);
-    }
-
-    fn compare_floats(a: &f64, b: &f64) -> Ordering {
-        a.partial_cmp(b).unwrap()
+        assert_eq!(value, actual.into_inner(), "Sorted values: {:?}", values);
     }
 }

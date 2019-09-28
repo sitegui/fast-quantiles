@@ -1,8 +1,8 @@
+use super::{OrderedF64, QuantileGenerator};
 use crate::quantile_to_rank;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64;
 use std::iter::{ExactSizeIterator, FusedIterator};
-use rand::Rng;
 
 /// An iterator that will generate `num` random values and that holds:
 /// rank(x) = ceil(quantile * (num - 1)), where
@@ -46,7 +46,7 @@ impl RandomGenerator {
 }
 
 impl Iterator for RandomGenerator {
-    type Item = f64;
+    type Item = OrderedF64;
 
     fn next(&mut self) -> Option<Self::Item> {
         // At each step, we'll select whether to generate a greater, lesser or the target value
@@ -63,7 +63,7 @@ impl Iterator for RandomGenerator {
             let remaining_ratio = 1. / (self.remaining + 1) as f64;
             if self.next_random() < remaining_ratio {
                 self.published_value = true;
-                return Some(self.value);
+                return Some(OrderedF64::from(self.value));
             }
         }
 
@@ -72,11 +72,11 @@ impl Iterator for RandomGenerator {
         self.remaining -= 1;
         if self.next_random() >= ratio {
             // Greater or equal
-            Some(self.value + self.next_random())
+            Some(OrderedF64::from(self.value + self.next_random()))
         } else {
             // Lesser (multiply by 1-E to make sure it will be lesser even when the random value is zero)
             self.remaining_lesser -= 1;
-            Some(self.value - self.next_non_zero_random())
+            Some(OrderedF64::from(self.value - self.next_non_zero_random()))
         }
     }
 
@@ -100,7 +100,9 @@ mod test {
     #[test]
     fn respect_seed() {
         fn check(seed: u64, expected_values: Vec<f64>) {
-            let values: Vec<f64> = RandomGenerator::new(0.5, 17., 7, seed).collect();
+            let values: Vec<_> = RandomGenerator::new(0.5, 17., 7, seed)
+                .map(OrderedF64::into_inner)
+                .collect();
             assert_eq!(values, expected_values);
         }
 
@@ -131,3 +133,5 @@ mod test {
         );
     }
 }
+
+impl QuantileGenerator for RandomGenerator {}
