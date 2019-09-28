@@ -9,7 +9,7 @@ use space_efficient_quantile::*;
 
 pub fn quantile_generator_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("quantile_generator");
-    let nums: Vec<usize> = vec![10, 1_000, 100_000, 10_000_000];
+    let nums: Vec<usize> = vec![1_000, 1_000_000];
     for num in nums {
         group.bench_with_input(BenchmarkId::new("Random", num), &num, |b, &num| {
             b.iter(|| quantile_generator::RandomGenerator::new(0.5, 17., num, 17))
@@ -28,16 +28,43 @@ pub fn quantile_generator_benchmark(c: &mut Criterion) {
 }
 
 pub fn summary_benchmark(c: &mut Criterion) {
-    let nums: Vec<usize> = vec![10, 1_000, 100_000, 10_000_000];
+    let mut group = c.benchmark_group("summary");
+    let nums: Vec<usize> = vec![1_000, 1_000_000];
     for num in nums {
-        c.bench_with_input(BenchmarkId::new("Summary", num), &num, |b, &num| {
+        if num < 1_000_000 {
+            group.bench_with_input(BenchmarkId::new("GK", num), &num, |b, &num| {
+                b.iter(|| {
+                    let mut sum = gk::Summary::new(0.01);
+                    for value in quantile_generator::RandomGenerator::new(0.5, 17., num, 17) {
+                        sum.insert_one(value);
+                    }
+                    assert_ne!(sum.query(0.5), None);
+                })
+            });
+        }
+
+        group.bench_with_input(BenchmarkId::new("Modified GK", num), &num, |b, &num| {
             b.iter(|| {
-                let mut sum = gk::Summary::new(0.01);
+                let mut sum = modified_gk::Summary::new(0.01);
                 for value in quantile_generator::RandomGenerator::new(0.5, 17., num, 17) {
-                    sum.insert(value);
+                    sum.insert_one(value);
                 }
+                assert_ne!(sum.query(0.5), None);
             })
         });
+
+        group.bench_with_input(
+            BenchmarkId::new("Batch modified GK", num),
+            &num,
+            |b, &num| {
+                b.iter(|| {
+                    let mut writer = modified_gk::SummaryWriter::new(0.01);
+                    writer.extend(quantile_generator::RandomGenerator::new(0.5, 17., num, 17));
+                    let sum = writer.into_summary();
+                    assert_ne!(sum.query(0.5), None);
+                })
+            },
+        );
     }
 }
 
