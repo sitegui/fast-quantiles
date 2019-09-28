@@ -7,7 +7,6 @@ mod test {
     use super::*;
     use crate::quantile_generator::*;
     use crate::rank_to_quantile;
-    use std::cmp::Ordering;
 
     #[test]
     fn check_max_error() {
@@ -46,7 +45,7 @@ mod test {
         println!("{:?}", s2);
 
         println!("After merge");
-        s1.merge(&mut s2);
+        s1.merge(s2);
         println!("{:?}", s1);
 
         check_all_ranks(s1, values, epsilon);
@@ -75,13 +74,13 @@ mod test {
         );
 
         // Merge all summaries
-        s1.merge(&mut s2);
-        s3.merge(&mut s4);
-        s5.merge(&mut s6);
-        s7.merge(&mut s8);
-        s1.merge(&mut s3);
-        s5.merge(&mut s7);
-        s1.merge(&mut s5);
+        s1.merge(s2);
+        s3.merge(s4);
+        s5.merge(s6);
+        s7.merge(s8);
+        s1.merge(s3);
+        s5.merge(s7);
+        s1.merge(s5);
 
         println!("After merge");
         println!("{:?}", s1);
@@ -112,13 +111,13 @@ mod test {
         );
 
         // Merge all summaries
-        s1.merge(&mut s2);
-        s1.merge(&mut s3);
-        s1.merge(&mut s4);
-        s1.merge(&mut s5);
-        s1.merge(&mut s6);
-        s1.merge(&mut s7);
-        s1.merge(&mut s8);
+        s1.merge(s2);
+        s1.merge(s3);
+        s1.merge(s4);
+        s1.merge(s5);
+        s1.merge(s6);
+        s1.merge(s7);
+        s1.merge(s8);
 
         println!("After merge");
         println!("{:?}", s1);
@@ -126,35 +125,29 @@ mod test {
         check_all_ranks(s1, values, epsilon);
     }
 
-    fn consume_generator<T>(gen: T, summaries: &mut [&mut Summary]) -> Vec<f64>
+    fn consume_generator<G>(gen: G, summaries: &mut [&mut Summary<G::Item>]) -> Vec<OrderedF64>
     where
-        T: Iterator<Item = f64>,
+        G: QuantileGenerator,
     {
         // Collect
         let mut values = Vec::new();
         for (i, value) in gen.enumerate() {
             values.push(value);
-            summaries[i % summaries.len()].insert(value);
+            summaries[i % summaries.len()].insert_one(value);
         }
 
         // Sort
-        values.sort_by(compare_floats);
+        values.sort();
         values
     }
 
-    fn compare_floats(a: &f64, b: &f64) -> Ordering {
-        a.partial_cmp(b).unwrap()
-    }
-
-    fn check_all_ranks(s: Summary, values: Vec<f64>, epsilon: f64) -> f64 {
-        let mut max_error = (0 as f64, 0 as usize, 0 as usize);
-        let num = s.get_num();
+    fn check_all_ranks(s: Summary<OrderedF64>, values: Vec<OrderedF64>, epsilon: f64) -> f64 {
+        let mut max_error = (0f64, 0u64, 0u64);
+        let num = s.len();
 
         for desired_rank in 1..=num {
-            let queried = s
-                .query(rank_to_quantile(desired_rank as u64, num as u64))
-                .unwrap();
-            let got_rank = values.iter().position(|&v| v == queried).unwrap() + 1;
+            let queried = s.query(rank_to_quantile(desired_rank, num)).unwrap();
+            let got_rank = (values.iter().position(|v| v == queried).unwrap() + 1) as u64;
             let error = (got_rank as f64 - desired_rank as f64) / num as f64;
             if error.abs() > max_error.0.abs() {
                 max_error = (error, desired_rank, got_rank)
@@ -163,15 +156,15 @@ mod test {
                 error.abs() <= epsilon,
                 "desired_rank={}, queried={}, got_rank={}, error={}",
                 desired_rank,
-                queried,
+                queried.into_inner(),
                 got_rank,
                 error
             );
         }
         println!("max_error={:?}", max_error);
 
-        assert_eq!(s.query(0.), Some(*values.first().unwrap()));
-        assert_eq!(s.query(1.), Some(*values.last().unwrap()));
+        assert_eq!(s.query(0.), values.first());
+        assert_eq!(s.query(1.), values.last());
 
         max_error.0
     }
