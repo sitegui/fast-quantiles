@@ -162,7 +162,7 @@ impl<T: Ord> Summary<T> {
     /// Merge a source of sorted samples into this Summary
     /// `other_len` is the number of values represented by the samples, that is, the sum of all its `g` values
     /// `other_capacity` is the minimum capacity for the final merged samples vector
-    pub(crate) fn merge_sorted_samples<I>(
+    pub(super) fn merge_sorted_samples<I>(
         &mut self,
         other_samples: I,
         other_len: u64,
@@ -216,12 +216,22 @@ impl<T: Ord> Summary<T> {
             }
         }
     }
+
+    #[cfg(test)]
+    pub(super) fn samples_spec(&self) -> Vec<(T, u64, u64)>
+    where
+        T: Copy,
+    {
+        self.samples
+            .iter()
+            .map(|&sample| (sample.value, sample.g, sample.delta))
+            .collect::<Vec<_>>()
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::fmt::Debug;
 
     #[test]
     fn insert_ones_and_query() {
@@ -230,59 +240,74 @@ mod test {
 
         // First
         summary.insert_one(8);
-        assert_samples(&summary, vec![(8, 1, 0)]);
+        assert_eq!(summary.samples_spec(), vec![(8, 1, 0)]);
 
         // New minimum
         summary.insert_one(6);
-        assert_samples(&summary, vec![(6, 1, 0), (8, 1, 0)]);
+        assert_eq!(summary.samples_spec(), vec![(6, 1, 0), (8, 1, 0)]);
 
         // New minimum + compression (cap=1)
         summary.insert_one(0);
-        assert_samples(&summary, vec![(0, 1, 0), (6, 1, 0), (8, 1, 0)]);
+        assert_eq!(
+            summary.samples_spec(),
+            vec![(0, 1, 0), (6, 1, 0), (8, 1, 0)],
+        );
 
         //
         summary.insert_one(4);
-        assert_samples(&summary, vec![(0, 1, 0), (4, 1, 0), (6, 1, 0), (8, 1, 0)]);
+        assert_eq!(
+            summary.samples_spec(),
+            vec![(0, 1, 0), (4, 1, 0), (6, 1, 0), (8, 1, 0)],
+        );
 
         // Local compression (cap=2)
         summary.insert_one(3);
-        assert_samples(&summary, vec![(0, 1, 0), (4, 2, 0), (6, 1, 0), (8, 1, 0)]);
+        assert_eq!(
+            summary.samples_spec(),
+            vec![(0, 1, 0), (4, 2, 0), (6, 1, 0), (8, 1, 0)],
+        );
 
         // New maximum + compression (cap=2)
         summary.insert_one(9);
-        assert_samples(&summary, vec![(0, 1, 0), (4, 2, 0), (8, 2, 0), (9, 1, 0)]);
+        assert_eq!(
+            summary.samples_spec(),
+            vec![(0, 1, 0), (4, 2, 0), (8, 2, 0), (9, 1, 0)],
+        );
 
         //
         summary.insert_one(2);
-        assert_samples(
-            &summary,
+        assert_eq!(
+            summary.samples_spec(),
             vec![(0, 1, 0), (2, 1, 1), (4, 2, 0), (8, 2, 0), (9, 1, 0)],
         );
 
         // Local compression (cap=3)
         summary.insert_one(5);
-        assert_samples(
-            &summary,
+        assert_eq!(
+            summary.samples_spec(),
             vec![(0, 1, 0), (2, 1, 1), (4, 2, 0), (8, 3, 0), (9, 1, 0)],
         );
 
         // Local compression + compression (cap=3)
         summary.insert_one(1);
-        assert_samples(
-            &summary,
+        assert_eq!(
+            summary.samples_spec(),
             vec![(0, 1, 0), (2, 2, 1), (4, 2, 0), (8, 3, 0), (9, 1, 0)],
         );
 
         // Local compression (cap=4)
         summary.insert_one(7);
-        assert_samples(
-            &summary,
+        assert_eq!(
+            summary.samples_spec(),
             vec![(0, 1, 0), (2, 2, 1), (4, 2, 0), (8, 4, 0), (9, 1, 0)],
         );
 
         // Compression (cap=4)
         summary.compress();
-        assert_samples(&summary, vec![(0, 1, 0), (4, 4, 0), (8, 4, 0), (9, 1, 0)]);
+        assert_eq!(
+            summary.samples_spec(),
+            vec![(0, 1, 0), (4, 4, 0), (8, 4, 0), (9, 1, 0)],
+        );
 
         // Query all ranks
         let check_rank = |rank, expected_value, rank_error| {
@@ -301,16 +326,5 @@ mod test {
         check_rank(8, 8, 1);
         check_rank(9, 8, 0);
         check_rank(10, 9, 0);
-    }
-
-    fn assert_samples<T: Ord + Debug + Copy>(summary: &Summary<T>, samples: Vec<(T, u64, u64)>) {
-        assert_eq!(
-            summary
-                .samples
-                .iter()
-                .map(|&sample| (sample.value, sample.g, sample.delta))
-                .collect::<Vec<(T, u64, u64)>>(),
-            samples
-        );
     }
 }
