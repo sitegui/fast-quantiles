@@ -29,7 +29,7 @@ impl<T: Ord + Clone> BTree<T> {
     /// The closure must guarantee that:
     /// 1. it won't mutate the passed elements in a way that changes their ordering
     /// 2. the concrete element to insert compares as equal to the effemeral `search_value`
-    pub fn try_insert<F>(&mut self, search_value: T, get_insert_value: F)
+    pub fn try_insert<F>(&mut self, search_value: &T, get_insert_value: F)
     where
         F: FnOnce(InsertionPoint<T>) -> Option<T>,
     {

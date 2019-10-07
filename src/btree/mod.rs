@@ -7,8 +7,8 @@ pub use tree::BTree;
 const CAPACITY: usize = 11;
 
 pub struct InsertionPoint<'a, T> {
-    pub left_endpoint: Option<&'a mut T>,
-    pub right_endpoint: Option<&'a mut T>,
+    pub left: Option<&'a mut T>,
+    pub right: Option<&'a mut T>,
 }
 
 enum TryInsertResult<T: Ord + Clone> {

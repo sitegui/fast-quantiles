@@ -13,10 +13,10 @@ impl<T: Ord + Clone> Node<T> {
     /// When this node splits, it will return the median and new right node
     pub(super) fn try_insert<F>(
         &mut self,
-        search_value: T,
+        search_value: &T,
         get_insert_value: F,
-        mut left_endpoint: Option<&mut T>,
-        mut right_endpoint: Option<&mut T>,
+        mut left: Option<&mut T>,
+        mut right: Option<&mut T>,
     ) -> TryInsertResult<T>
     where
         F: FnOnce(InsertionPoint<T>) -> Option<T>,
@@ -26,28 +26,22 @@ impl<T: Ord + Clone> Node<T> {
         for i in 0..self.len {
             // Safe since the element is inside the initialized zone
             let element = unsafe { &mut *self.elements.get_unchecked_mut(i).as_mut_ptr() };
-            if *element > search_value {
+            if *element > *search_value {
                 index = i;
-                right_endpoint = Some(element);
+                right = Some(element);
                 break;
             }
         }
 
         if index > 0 {
-            left_endpoint =
-                Some(unsafe { &mut *self.elements.get_unchecked_mut(index - 1).as_mut_ptr() });
+            left = Some(unsafe { &mut *self.elements.get_unchecked_mut(index - 1).as_mut_ptr() });
         }
 
         match &mut self.children {
             Some(children) => {
                 // Recursively look into its children
                 let child = unsafe { &mut *children.get_unchecked_mut(index).as_mut_ptr() };
-                match child.try_insert(
-                    search_value,
-                    get_insert_value,
-                    left_endpoint,
-                    right_endpoint,
-                ) {
+                match child.try_insert(search_value, get_insert_value, left, right) {
                     TryInsertResult::Inserted(InsertResult::PendingSplit(median, right)) => {
                         TryInsertResult::Inserted(self.insert_and_split(median, Some(right), index))
                     }
@@ -56,10 +50,7 @@ impl<T: Ord + Clone> Node<T> {
             }
             None => {
                 // Insertion point found: call closure and check if the insertion should proceed
-                match get_insert_value(InsertionPoint {
-                    left_endpoint,
-                    right_endpoint,
-                }) {
+                match get_insert_value(InsertionPoint { left, right }) {
                     None => TryInsertResult::NothingInserted,
                     Some(insertion_value) => TryInsertResult::Inserted(self.insert_and_split(
                         insertion_value,
@@ -176,9 +167,6 @@ impl<T: Ord + Clone> Node<T> {
             self.len += 1
         }
     }
-
-    #[cfg(test)]
-    fn spec(self) {}
 }
 
 impl<T: Ord + Clone> Drop for Node<T> {
@@ -234,49 +222,333 @@ impl<T: Ord + Clone> Clone for Node<T> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::sync::Mutex;
+
+    // Wrap a value and
+    // - double it every clone operation
+    // - count the number of drop calls
+    lazy_static! {
+        static ref NUM_DROPPED: Mutex<u32> = Mutex::new(0);
+        static ref DROP_MUTEX: Mutex<()> = Mutex::new(());
+    }
+    #[derive(Ord, Eq, PartialOrd, PartialEq, Debug)]
+    struct Element(i32);
+    impl Clone for Element {
+        fn clone(&self) -> Self {
+            Element(2 * self.0)
+        }
+    }
+    impl Drop for Element {
+        fn drop(&mut self) {
+            *NUM_DROPPED.lock().unwrap() += 1;
+        }
+    }
+
+    fn helper_assert_drop_count<T>(x: T, num: u32) {
+        let lock = DROP_MUTEX.lock().unwrap();
+        let before = *NUM_DROPPED.lock().unwrap();
+        drop(x);
+        let after = *NUM_DROPPED.lock().unwrap();
+        *NUM_DROPPED.lock().unwrap() = 0;
+        drop(lock);
+        assert_eq!(before, 0);
+        assert_eq!(after, num);
+    }
+
+    /// Create node from owning data structures
+    fn helper_new_node<T: Ord + Clone>(
+        elements: Vec<T>,
+        children: Option<Vec<Node<T>>>,
+    ) -> Node<T> {
+        let init_elements = elements
+            .into_iter()
+            .map(|x| MaybeUninit::new(x))
+            .collect::<Vec<_>>();
+        let init_children = children.map(|children| {
+            children
+                .into_iter()
+                .map(|x| MaybeUninit::new(Box::new(x)))
+                .collect::<Vec<_>>()
+        });
+        let ref_init_children = init_children.as_ref().map(|x| &x[..]);
+        let node = unsafe { Node::with_elements_and_children(&init_elements, ref_init_children) };
+        std::mem::forget(init_elements);
+        std::mem::forget(init_children);
+        node
+    }
+
+    fn helper_get_element<T: Ord + Clone>(node: &Node<T>, index: usize) -> &T {
+        unsafe { &*node.elements[index].as_ptr() }
+    }
+
+    fn helper_get_child<T: Ord + Clone>(node: &Node<T>, index: usize) -> &Node<T> {
+        unsafe { &*node.children.as_ref().unwrap()[index].as_ptr() }
+    }
+
+    fn helper_assert_elements(node: &Node<Element>, values: Vec<i32>) {
+        assert_eq!(node.len, values.len());
+        for (i, v) in values.iter().enumerate() {
+            assert_eq!(helper_get_element(node, i).0, *v);
+        }
+    }
+
+    fn helper_assert_children_first_element(node: &Node<Element>, values: Vec<i32>) {
+        assert_eq!(node.len + 1, values.len());
+        for (i, v) in values.iter().enumerate() {
+            assert_eq!(helper_get_element(helper_get_child(node, i), 0).0, *v);
+        }
+    }
 
     #[test]
     fn create_node() {
-        let leaf = unsafe {
-            Node::with_elements_and_children(&[MaybeUninit::new(3), MaybeUninit::new(14)], None)
-        };
-
+        let leaf = helper_new_node(vec![Element(1), Element(2)], None);
         assert_eq!(leaf.len, 2);
+        assert_eq!(helper_get_element(&leaf, 0).0, 1);
+        assert_eq!(helper_get_element(&leaf, 1).0, 2);
 
-        let non_leaf = unsafe {
-            Node::with_elements_and_children(
-                &[MaybeUninit::new(3), MaybeUninit::new(14)],
-                Some(&[
-                    MaybeUninit::new(Box::new(leaf.clone())),
-                    MaybeUninit::new(Box::new(leaf.clone())),
-                    MaybeUninit::new(Box::new(leaf)),
-                ]),
-            )
-        };
-
+        let non_leaf = helper_new_node(
+            vec![Element(3), Element(4)],
+            Some(vec![leaf.clone(), leaf.clone(), leaf]),
+        );
         assert_eq!(non_leaf.len, 2);
+        assert_eq!(helper_get_element(&non_leaf, 0).0, 3);
+        assert_eq!(helper_get_element(&non_leaf, 1).0, 4);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 0).0, 2);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 1).0, 4);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 0).0, 2);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 1).0, 4);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 0).0, 1);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 1).0, 2);
+
+        helper_assert_drop_count(non_leaf, 8);
     }
 
     #[test]
     #[should_panic]
     fn create_node_too_big() {
-        unsafe {
-            let mut elements: [MaybeUninit<_>; CAPACITY + 1] = MaybeUninit::uninit().assume_init();
-            for i in 0..CAPACITY + 1 {
-                elements[i] = MaybeUninit::new(i);
-            }
-            Node::with_elements_and_children(&elements, None);
-        }
+        helper_new_node((0..CAPACITY + 1).collect::<Vec<_>>(), None);
     }
 
     #[test]
     #[should_panic]
     fn create_node_wrong_number_of_children() {
-        unsafe {
-            Node::with_elements_and_children(
-                &[MaybeUninit::new(3), MaybeUninit::new(14)],
-                Some(&[]),
-            );
+        helper_new_node(vec![3, 14], Some(vec![]));
+    }
+
+    #[test]
+    fn clone_node() {
+        // Create node topology
+        let a = helper_new_node(vec![Element(1), Element(2)], None);
+        let b = helper_new_node(vec![Element(4), Element(5)], None);
+        let c = helper_new_node(vec![Element(3)], Some(vec![a, b]));
+
+        assert_eq!(helper_get_element(&c, 0).0, 3);
+        assert_eq!(helper_get_element(helper_get_child(&c, 0), 0).0, 1);
+        assert_eq!(helper_get_element(helper_get_child(&c, 1), 0).0, 4);
+
+        // Cloned explicitly
+        let d = c.clone();
+        assert_eq!(helper_get_element(&d, 0).0, 6);
+        assert_eq!(helper_get_element(helper_get_child(&d, 0), 0).0, 2);
+        assert_eq!(helper_get_element(helper_get_child(&d, 1), 0).0, 8);
+
+        // Drop calls
+        helper_assert_drop_count(c, 5);
+        helper_assert_drop_count(d, 5);
+    }
+
+    #[test]
+    fn insert() {
+        let mut leaf_left = helper_new_node(vec![], None);
+        let mut leaf_right = helper_new_node(vec![], None);
+        leaf_left.insert(Element(17), None, 0);
+        leaf_left.insert(Element(15), None, 0);
+        leaf_right.insert(Element(25), None, 0);
+        leaf_right.insert(Element(27), None, 1);
+        assert_eq!(leaf_left.len, 2);
+        assert_eq!(helper_get_element(&leaf_left, 0).0, 15);
+        assert_eq!(helper_get_element(&leaf_left, 1).0, 17);
+        assert_eq!(leaf_right.len, 2);
+        assert_eq!(helper_get_element(&leaf_right, 0).0, 25);
+        assert_eq!(helper_get_element(&leaf_right, 1).0, 27);
+
+        let mut non_leaf = helper_new_node(vec![Element(20)], Some(vec![leaf_left, leaf_right]));
+
+        let new_leaf = helper_new_node(vec![Element(35), Element(37)], None);
+        non_leaf.insert(Element(30), Some(new_leaf), 1);
+        assert_eq!(non_leaf.len, 2);
+        assert_eq!(helper_get_element(&non_leaf, 0).0, 20);
+        assert_eq!(helper_get_element(&non_leaf, 1).0, 30);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 0).0, 15);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 0).0, 25);
+        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 0).0, 35);
+
+        helper_assert_drop_count(non_leaf, 8);
+    }
+
+    #[test]
+    fn insert_and_split_leaf() {
+        // Fill node
+        let mut node = helper_new_node(vec![], None);
+        for i in 0..11 {
+            assert!(match node.insert_and_split(Element(i as i32), None, i) {
+                InsertResult::Inserted => true,
+                _ => false,
+            });
         }
+
+        let mut node2 = node.clone();
+
+        // Split and add to right
+        assert!(match node.insert_and_split(Element(-1), None, 2) {
+            InsertResult::PendingSplit(el, right_node) => {
+                assert_eq!(el.0, 5);
+                helper_assert_drop_count(el, 1);
+                helper_assert_elements(&node, vec![0, 1, -1, 2, 3, 4]);
+                helper_assert_drop_count(node, 6);
+                helper_assert_elements(&right_node, vec![6, 7, 8, 9, 10]);
+                helper_assert_drop_count(right_node, 5);
+                true
+            }
+            _ => false,
+        });
+
+        // Split and add to left
+        assert!(match node2.insert_and_split(Element(-1), None, 7) {
+            InsertResult::PendingSplit(el, right_node) => {
+                assert_eq!(el.0, 10);
+                helper_assert_drop_count(el, 1);
+                helper_assert_elements(&node2, vec![0, 2, 4, 6, 8]);
+                helper_assert_drop_count(node2, 5);
+                helper_assert_elements(&right_node, vec![12, -1, 14, 16, 18, 20]);
+                helper_assert_drop_count(right_node, 6);
+                true
+            }
+            _ => false,
+        });
+    }
+
+    #[test]
+    fn insert_and_split_non_leaf() {
+        let elements = (0..11).map(|n| Element(n)).collect();
+        let children = (20..32)
+            .map(|n| helper_new_node(vec![Element(n)], None))
+            .collect();
+        let mut node = helper_new_node(elements, Some(children));
+
+        let new_value = Element(100);
+        let new_node = helper_new_node(vec![Element(101)], None);
+        assert!(match node.insert_and_split(new_value, Some(new_node), 3) {
+            InsertResult::PendingSplit(el, right_node) => {
+                assert_eq!(el.0, 5);
+                helper_assert_drop_count(el, 1);
+
+                helper_assert_elements(&node, vec![0, 1, 2, 100, 3, 4]);
+                helper_assert_children_first_element(&node, vec![20, 21, 22, 23, 101, 24, 25]);
+                helper_assert_drop_count(node, 13);
+
+                helper_assert_elements(&right_node, vec![6, 7, 8, 9, 10]);
+                helper_assert_children_first_element(&right_node, vec![26, 27, 28, 29, 30, 31]);
+                helper_assert_drop_count(right_node, 11);
+                true
+            }
+            _ => false,
+        })
+    }
+
+    #[test]
+    fn try_insert_leaf() {
+        // First insertion
+        let mut node = helper_new_node(vec![], None);
+        let mut search_el = Element(11);
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                assert_eq!(p.left, None);
+                assert_eq!(p.right, None);
+                Some(Element(10))
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::Inserted(InsertResult::Inserted) => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![10]);
+
+        // Max insertion
+        search_el.0 = 21;
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                assert_eq!(p.left.unwrap().0, 10);
+                assert_eq!(p.right, None);
+                Some(Element(20))
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::Inserted(InsertResult::Inserted) => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![10, 20]);
+
+        // Min insertion
+        search_el.0 = 9;
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                assert_eq!(p.left, None);
+                assert_eq!(p.right.unwrap().0, 10);
+                Some(Element(8))
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::Inserted(InsertResult::Inserted) => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![8, 10, 20]);
+
+        // Non-extreme insertion
+        search_el.0 = 12;
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                assert_eq!(p.left.unwrap().0, 10);
+                assert_eq!(p.right.unwrap().0, 20);
+                Some(Element(13))
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::Inserted(InsertResult::Inserted) => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![8, 10, 13, 20]);
+
+        // No insertion
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                assert_eq!(p.left.unwrap().0, 10);
+                assert_eq!(p.right.unwrap().0, 13);
+                None
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::NothingInserted => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![8, 10, 13, 20]);
+
+        helper_assert_drop_count(search_el, 1);
+        helper_assert_drop_count(node, 4);
+    }
+
+    #[test]
+    fn try_insert_non_leaf() {
+        unimplemented!();
     }
 }
