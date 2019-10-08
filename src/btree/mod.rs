@@ -1,7 +1,9 @@
 mod node;
 mod tree;
+mod tree_iter;
 
 pub use tree::BTree;
+pub use tree_iter::TreeIter;
 
 // This implementation assumes the capacity is odd
 const CAPACITY: usize = 11;

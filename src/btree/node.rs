@@ -62,6 +62,25 @@ impl<T: Ord + Clone> Node<T> {
         }
     }
 
+    /// Insert a new value larger or equal to the current maximum value.
+    /// This is a logical error to violate the above requirement.
+    pub(super) fn insert_max(&mut self, value: T) -> InsertResult<T> {
+        match &mut self.children {
+            // Recursively look into its children
+            Some(children) => {
+                let child = unsafe { &mut *children.get_unchecked_mut(self.len).as_mut_ptr() };
+                match child.insert_max(value) {
+                    InsertResult::PendingSplit(median, right) => {
+                        self.insert_and_split(median, Some(right), self.len)
+                    }
+                    x => x,
+                }
+            }
+            // Insertion point found
+            None => self.insert_and_split(value, None, self.len),
+        }
+    }
+
     /// Build a new node (leaf or root).
     /// It is marked unsafe because the node will copy the values from the arguments.
     /// It up to the caller to make sure no other valid reference to these items exist
@@ -95,8 +114,35 @@ impl<T: Ord + Clone> Node<T> {
         }
     }
 
+    /// Return the total number of elements in this node
     pub(super) fn len(&self) -> usize {
         self.len
+    }
+
+    /// Return the element at the given index.
+    /// Panics if out-of-bounds
+    pub(super) fn get_element(&self, index: usize) -> &T {
+        assert!(index < self.len);
+        unsafe { &*self.elements.get_unchecked(index).as_ptr() }
+    }
+
+    /// Return whether the node is a leaf
+    pub(super) fn is_leaf(&self) -> bool {
+        self.children.is_none()
+    }
+
+    /// Return the child at the given index.
+    /// Panics if it is a leaf node or out-of-bounds access
+    pub(super) fn get_child(&self, index: usize) -> &Node<T> {
+        assert!(index < self.len + 1);
+        unsafe {
+            &*self
+                .children
+                .as_ref()
+                .unwrap()
+                .get_unchecked(index)
+                .as_ptr()
+        }
     }
 
     /// Insert `value` (and optional right child) into this node.
@@ -281,25 +327,17 @@ mod test {
         node
     }
 
-    fn helper_get_element<T: Ord + Clone>(node: &Node<T>, index: usize) -> &T {
-        unsafe { &*node.elements[index].as_ptr() }
-    }
-
-    fn helper_get_child<T: Ord + Clone>(node: &Node<T>, index: usize) -> &Node<T> {
-        unsafe { &*node.children.as_ref().unwrap()[index].as_ptr() }
-    }
-
     fn helper_assert_elements(node: &Node<Element>, values: Vec<i32>) {
         assert_eq!(node.len, values.len());
         for (i, v) in values.iter().enumerate() {
-            assert_eq!(helper_get_element(node, i).0, *v);
+            assert_eq!(node.get_element(i).0, *v);
         }
     }
 
     fn helper_assert_children_first_element(node: &Node<Element>, values: Vec<i32>) {
         assert_eq!(node.len + 1, values.len());
         for (i, v) in values.iter().enumerate() {
-            assert_eq!(helper_get_element(helper_get_child(node, i), 0).0, *v);
+            assert_eq!(node.get_child(i).get_element(0).0, *v);
         }
     }
 
@@ -307,22 +345,22 @@ mod test {
     fn create_node() {
         let leaf = helper_new_node(vec![Element(1), Element(2)], None);
         assert_eq!(leaf.len, 2);
-        assert_eq!(helper_get_element(&leaf, 0).0, 1);
-        assert_eq!(helper_get_element(&leaf, 1).0, 2);
+        assert_eq!(leaf.get_element(0).0, 1);
+        assert_eq!(leaf.get_element(1).0, 2);
 
         let non_leaf = helper_new_node(
             vec![Element(3), Element(4)],
             Some(vec![leaf.clone(), leaf.clone(), leaf]),
         );
         assert_eq!(non_leaf.len, 2);
-        assert_eq!(helper_get_element(&non_leaf, 0).0, 3);
-        assert_eq!(helper_get_element(&non_leaf, 1).0, 4);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 0).0, 2);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 1).0, 4);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 0).0, 2);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 1).0, 4);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 0).0, 1);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 1).0, 2);
+        assert_eq!(non_leaf.get_element(0).0, 3);
+        assert_eq!(non_leaf.get_element(1).0, 4);
+        assert_eq!(non_leaf.get_child(0).get_element(0).0, 2);
+        assert_eq!(non_leaf.get_child(0).get_element(1).0, 4);
+        assert_eq!(non_leaf.get_child(1).get_element(0).0, 2);
+        assert_eq!(non_leaf.get_child(1).get_element(1).0, 4);
+        assert_eq!(non_leaf.get_child(2).get_element(0).0, 1);
+        assert_eq!(non_leaf.get_child(2).get_element(1).0, 2);
 
         helper_assert_drop_count(non_leaf, 8);
     }
@@ -346,15 +384,15 @@ mod test {
         let b = helper_new_node(vec![Element(4), Element(5)], None);
         let c = helper_new_node(vec![Element(3)], Some(vec![a, b]));
 
-        assert_eq!(helper_get_element(&c, 0).0, 3);
-        assert_eq!(helper_get_element(helper_get_child(&c, 0), 0).0, 1);
-        assert_eq!(helper_get_element(helper_get_child(&c, 1), 0).0, 4);
+        assert_eq!(c.get_element(0).0, 3);
+        assert_eq!(c.get_child(0).get_element(0).0, 1);
+        assert_eq!(c.get_child(1).get_element(0).0, 4);
 
         // Cloned explicitly
         let d = c.clone();
-        assert_eq!(helper_get_element(&d, 0).0, 6);
-        assert_eq!(helper_get_element(helper_get_child(&d, 0), 0).0, 2);
-        assert_eq!(helper_get_element(helper_get_child(&d, 1), 0).0, 8);
+        assert_eq!(d.get_element(0).0, 6);
+        assert_eq!(d.get_child(0).get_element(0).0, 2);
+        assert_eq!(d.get_child(1).get_element(0).0, 8);
 
         // Drop calls
         helper_assert_drop_count(c, 5);
@@ -370,22 +408,22 @@ mod test {
         leaf_right.insert(Element(25), None, 0);
         leaf_right.insert(Element(27), None, 1);
         assert_eq!(leaf_left.len, 2);
-        assert_eq!(helper_get_element(&leaf_left, 0).0, 15);
-        assert_eq!(helper_get_element(&leaf_left, 1).0, 17);
+        assert_eq!(leaf_left.get_element(0).0, 15);
+        assert_eq!(leaf_left.get_element(1).0, 17);
         assert_eq!(leaf_right.len, 2);
-        assert_eq!(helper_get_element(&leaf_right, 0).0, 25);
-        assert_eq!(helper_get_element(&leaf_right, 1).0, 27);
+        assert_eq!(leaf_right.get_element(0).0, 25);
+        assert_eq!(leaf_right.get_element(1).0, 27);
 
         let mut non_leaf = helper_new_node(vec![Element(20)], Some(vec![leaf_left, leaf_right]));
 
         let new_leaf = helper_new_node(vec![Element(35), Element(37)], None);
         non_leaf.insert(Element(30), Some(new_leaf), 1);
         assert_eq!(non_leaf.len, 2);
-        assert_eq!(helper_get_element(&non_leaf, 0).0, 20);
-        assert_eq!(helper_get_element(&non_leaf, 1).0, 30);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 0), 0).0, 15);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 1), 0).0, 25);
-        assert_eq!(helper_get_element(helper_get_child(&non_leaf, 2), 0).0, 35);
+        assert_eq!(non_leaf.get_element(0).0, 20);
+        assert_eq!(non_leaf.get_element(1).0, 30);
+        assert_eq!(non_leaf.get_child(0).get_element(0).0, 15);
+        assert_eq!(non_leaf.get_child(1).get_element(0).0, 25);
+        assert_eq!(non_leaf.get_child(2).get_element(0).0, 35);
 
         helper_assert_drop_count(non_leaf, 8);
     }
