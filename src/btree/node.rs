@@ -95,6 +95,10 @@ impl<T: Ord + Clone> Node<T> {
         }
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.len
+    }
+
     /// Insert `value` (and optional right child) into this node.
     /// If the node is full, it will be split it into (left, median, right).
     /// Self will become left and the other two values will be returned
@@ -549,6 +553,49 @@ mod test {
 
     #[test]
     fn try_insert_non_leaf() {
-        unimplemented!();
+        // Create 3 full leaf nodes and a non-full non-leaf one
+        let leaf1 = helper_new_node((0..11).map(|x| Element(x)).collect(), None);
+        let leaf2 = helper_new_node((100..111).map(|x| Element(x)).collect(), None);
+        let leaf3 = helper_new_node((200..211).map(|x| Element(x)).collect(), None);
+        let mut node = helper_new_node(
+            vec![Element(50), Element(150)],
+            Some(vec![leaf1, leaf2, leaf3]),
+        );
+
+        let mut check_query = |search_value: i32,
+                               expected_left: Option<i32>,
+                               expected_right: Option<i32>,
+                               insert_value: Option<i32>| {
+            let search_el = Element(search_value);
+            node.try_insert(
+                &search_el,
+                |insertion| {
+                    assert_eq!(insertion.left.map(|x| x.0), expected_left);
+                    assert_eq!(insertion.right.map(|x| x.0), expected_right);
+                    insert_value.map(|x| Element(x))
+                },
+                None,
+                None,
+            );
+            helper_assert_drop_count(search_el, 1);
+        };
+
+        // Min
+        check_query(-2, None, Some(0), None);
+        // Right on parent
+        check_query(9, Some(9), Some(10), None);
+        check_query(10, Some(10), Some(50), None);
+        check_query(11, Some(10), Some(50), None);
+        // Left on parent
+        check_query(49, Some(10), Some(50), None);
+        check_query(50, Some(50), Some(100), None);
+        check_query(51, Some(50), Some(100), None);
+
+        // Split and move into parent
+        check_query(7, Some(7), Some(8), Some(7));
+        helper_assert_elements(&node, vec![5, 50, 150]);
+        helper_assert_children_first_element(&node, vec![0, 6, 100, 200]);
+
+        helper_assert_drop_count(node, 36);
     }
 }

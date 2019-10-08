@@ -62,3 +62,24 @@ impl<T: Ord + Clone> BTree<T> {
         self.len
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_new_root() {
+        // Fill tree
+        let mut tree = BTree::new();
+        for i in 0..CAPACITY {
+            tree.try_insert(&i, |_| Some(i));
+        }
+        assert_eq!(tree.len(), CAPACITY);
+        assert_eq!(tree.root.len(), CAPACITY);
+
+        // Split at insert
+        tree.try_insert(&0, |_| Some(0));
+        assert_eq!(tree.len(), CAPACITY + 1);
+        assert_eq!(tree.root.len(), 1);
+    }
+}
