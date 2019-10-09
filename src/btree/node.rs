@@ -46,7 +46,12 @@ impl<T: Ord + Clone> Node<T> {
                 let child = unsafe { self.get_mut_child_unchecked(index) };
 
                 // Recursively look into the child
-                match child.try_insert(search_value, get_insert_value, new_left, new_right) {
+                match child.try_insert(
+                    search_value,
+                    get_insert_value,
+                    new_left.or(left),
+                    new_right.or(right),
+                ) {
                     // Insertion bubbled a split up
                     TryInsertResult::Inserted(InsertResult::PendingSplit(
                         median,
