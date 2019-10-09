@@ -59,7 +59,7 @@ impl<T: Ord + Clone> BTree<T> {
 
     /// Insert a new value larger or equal to the current maximum value.
     /// This is a logical error to violate the above requirement.
-    fn insert_max(&mut self, value: T) {
+    pub fn insert_max(&mut self, value: T) {
         let insert_result = self.root.insert_max(value);
         self.handle_insert_result(insert_result);
     }

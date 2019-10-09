@@ -11,46 +11,83 @@ pub(super) struct Node<T: Ord + Clone> {
 impl<T: Ord + Clone> Node<T> {
     /// Recursive implementation of `BTree::try_insert`.
     /// When this node splits, it will return the median and new right node
-    pub(super) fn try_insert<F>(
-        &mut self,
+    pub(super) fn try_insert<'a, F>(
+        &'a mut self,
         search_value: &T,
         get_insert_value: F,
-        mut left: Option<&mut T>,
-        mut right: Option<&mut T>,
+        left: Option<&'a mut T>,
+        right: Option<&'a mut T>,
     ) -> TryInsertResult<T>
     where
         F: FnOnce(InsertionPoint<T>) -> Option<T>,
     {
         // Find first index such that element > search_value
         let mut index = self.len;
+        let mut new_right = None;
         for i in 0..self.len {
             // Safe since the element is inside the initialized zone
-            let element = unsafe { &mut *self.elements.get_unchecked_mut(i).as_mut_ptr() };
+            let element = unsafe { self.get_mut_element_unchecked(i) };
             if *element > *search_value {
                 index = i;
-                right = Some(element);
+                new_right = Some(element);
                 break;
             }
         }
 
-        if index > 0 {
-            left = Some(unsafe { &mut *self.elements.get_unchecked_mut(index - 1).as_mut_ptr() });
-        }
+        let new_left = if index > 0 {
+            Some(unsafe { self.get_mut_element_unchecked(index - 1) })
+        } else {
+            None
+        };
 
-        match &mut self.children {
-            Some(children) => {
-                // Recursively look into its children
-                let child = unsafe { &mut *children.get_unchecked_mut(index).as_mut_ptr() };
-                match child.try_insert(search_value, get_insert_value, left, right) {
-                    TryInsertResult::Inserted(InsertResult::PendingSplit(median, right)) => {
-                        TryInsertResult::Inserted(self.insert_and_split(median, Some(right), index))
-                    }
+        match &self.children {
+            // Non-leaf node
+            Some(_) => {
+                let child = unsafe { self.get_mut_child_unchecked(index) };
+
+                // Recursively look into the child
+                match child.try_insert(search_value, get_insert_value, new_left, new_right) {
+                    // Insertion bubbled a split up
+                    TryInsertResult::Inserted(InsertResult::PendingSplit(
+                        median,
+                        new_right_node,
+                    )) => TryInsertResult::Inserted(self.insert_and_split(
+                        median,
+                        Some(new_right_node),
+                        index,
+                    )),
                     x => x,
                 }
             }
+            // Leaf
             None => {
+                // Build the final insertion point structure
+                let insertion_point = unsafe {
+                    if index == 0 && self.len == 0 {
+                        // Tree is empty
+                        InsertionPoint::Empty
+                    } else if index == 0 && left.is_none() {
+                        // Minimum all the way
+                        InsertionPoint::Minimum(
+                            new_right.unwrap(),
+                            if self.len > 1 {
+                                Some(self.get_mut_element_unchecked(1))
+                            } else {
+                                right
+                            },
+                        )
+                    } else if index == self.len && right.is_none() {
+                        // Maximum all the way
+                        InsertionPoint::Maximum(new_left.unwrap())
+                    } else {
+                        // Right is always present at this point, otherwise the `else if`
+                        // above would catch it
+                        InsertionPoint::Intermediate(new_right.or(right).unwrap())
+                    }
+                };
+
                 // Insertion point found: call closure and check if the insertion should proceed
-                match get_insert_value(InsertionPoint { left, right }) {
+                match get_insert_value(insertion_point) {
                     None => TryInsertResult::NothingInserted,
                     Some(insertion_value) => TryInsertResult::Inserted(self.insert_and_split(
                         insertion_value,
@@ -65,10 +102,10 @@ impl<T: Ord + Clone> Node<T> {
     /// Insert a new value larger or equal to the current maximum value.
     /// This is a logical error to violate the above requirement.
     pub(super) fn insert_max(&mut self, value: T) -> InsertResult<T> {
-        match &mut self.children {
+        match self.children {
             // Recursively look into its children
-            Some(children) => {
-                let child = unsafe { &mut *children.get_unchecked_mut(self.len).as_mut_ptr() };
+            Some(_) => {
+                let child = unsafe { self.get_mut_child_unchecked(self.len) };
                 match child.insert_max(value) {
                     InsertResult::PendingSplit(median, right) => {
                         self.insert_and_split(median, Some(right), self.len)
@@ -126,6 +163,11 @@ impl<T: Ord + Clone> Node<T> {
         unsafe { &*self.elements.get_unchecked(index).as_ptr() }
     }
 
+    /// Return the element at the given index.
+    unsafe fn get_mut_element_unchecked<'a, 'b>(&'a mut self, index: usize) -> &'b mut T {
+        &mut *self.elements.get_unchecked_mut(index).as_mut_ptr()
+    }
+
     /// Return whether the node is a leaf
     pub(super) fn is_leaf(&self) -> bool {
         self.children.is_none()
@@ -143,6 +185,16 @@ impl<T: Ord + Clone> Node<T> {
                 .get_unchecked(index)
                 .as_ptr()
         }
+    }
+
+    /// Return the child at the given index.
+    unsafe fn get_mut_child_unchecked(&mut self, index: usize) -> &mut Node<T> {
+        &mut *self
+            .children
+            .as_mut()
+            .unwrap()
+            .get_unchecked_mut(index)
+            .as_mut_ptr()
     }
 
     /// Insert `value` (and optional right child) into this node.
@@ -341,6 +393,29 @@ mod test {
         }
     }
 
+    fn helper_assert_eq_insertion_point(
+        insertion_point: InsertionPoint<Element>,
+        expected_insertion_point: InsertionPoint<i32>,
+    ) {
+        assert!(match (insertion_point, expected_insertion_point) {
+            (InsertionPoint::Empty, InsertionPoint::Empty) => true,
+            (InsertionPoint::Minimum(a, b), InsertionPoint::Minimum(a2, b2)) => {
+                assert_eq!(a.0, *a2);
+                assert_eq!(b.map(|x| x.0), b2.map(|x| *x));
+                true
+            }
+            (InsertionPoint::Maximum(a), InsertionPoint::Maximum(a2)) => {
+                assert_eq!(a.0, *a2);
+                true
+            }
+            (InsertionPoint::Intermediate(a), InsertionPoint::Intermediate(a2)) => {
+                assert_eq!(a.0, *a2);
+                true
+            }
+            _ => false,
+        });
+    }
+
     #[test]
     fn create_node() {
         let leaf = helper_new_node(vec![Element(1), Element(2)], None);
@@ -506,8 +581,7 @@ mod test {
         assert!(match node.try_insert(
             &search_el,
             |p| {
-                assert_eq!(p.left, None);
-                assert_eq!(p.right, None);
+                helper_assert_eq_insertion_point(p, InsertionPoint::Empty);
                 Some(Element(10))
             },
             None,
@@ -518,13 +592,28 @@ mod test {
         });
         helper_assert_elements(&node, vec![10]);
 
+        // Min insertion point with no double right
+        search_el.0 = 9;
+        assert!(match node.try_insert(
+            &search_el,
+            |p| {
+                helper_assert_eq_insertion_point(p, InsertionPoint::Minimum(&mut 10, None));
+                None
+            },
+            None,
+            None,
+        ) {
+            TryInsertResult::NothingInserted => true,
+            _ => false,
+        });
+        helper_assert_elements(&node, vec![10]);
+
         // Max insertion
         search_el.0 = 21;
         assert!(match node.try_insert(
             &search_el,
             |p| {
-                assert_eq!(p.left.unwrap().0, 10);
-                assert_eq!(p.right, None);
+                helper_assert_eq_insertion_point(p, InsertionPoint::Maximum(&mut 10));
                 Some(Element(20))
             },
             None,
@@ -540,8 +629,10 @@ mod test {
         assert!(match node.try_insert(
             &search_el,
             |p| {
-                assert_eq!(p.left, None);
-                assert_eq!(p.right.unwrap().0, 10);
+                helper_assert_eq_insertion_point(
+                    p,
+                    InsertionPoint::Minimum(&mut 10, Some(&mut 20)),
+                );
                 Some(Element(8))
             },
             None,
@@ -557,8 +648,7 @@ mod test {
         assert!(match node.try_insert(
             &search_el,
             |p| {
-                assert_eq!(p.left.unwrap().0, 10);
-                assert_eq!(p.right.unwrap().0, 20);
+                helper_assert_eq_insertion_point(p, InsertionPoint::Intermediate(&mut 20));
                 Some(Element(13))
             },
             None,
@@ -573,8 +663,7 @@ mod test {
         assert!(match node.try_insert(
             &search_el,
             |p| {
-                assert_eq!(p.left.unwrap().0, 10);
-                assert_eq!(p.right.unwrap().0, 13);
+                helper_assert_eq_insertion_point(p, InsertionPoint::Intermediate(&mut 13));
                 None
             },
             None,
@@ -601,15 +690,13 @@ mod test {
         );
 
         let mut check_query = |search_value: i32,
-                               expected_left: Option<i32>,
-                               expected_right: Option<i32>,
+                               expected_insertion_point: InsertionPoint<i32>,
                                insert_value: Option<i32>| {
             let search_el = Element(search_value);
             node.try_insert(
                 &search_el,
-                |insertion| {
-                    assert_eq!(insertion.left.map(|x| x.0), expected_left);
-                    assert_eq!(insertion.right.map(|x| x.0), expected_right);
+                |insertion_point| {
+                    helper_assert_eq_insertion_point(insertion_point, expected_insertion_point);
                     insert_value.map(|x| Element(x))
                 },
                 None,
@@ -618,19 +705,21 @@ mod test {
             helper_assert_drop_count(search_el, 1);
         };
 
-        // Min
-        check_query(-2, None, Some(0), None);
-        // Right on parent
-        check_query(9, Some(9), Some(10), None);
-        check_query(10, Some(10), Some(50), None);
-        check_query(11, Some(10), Some(50), None);
-        // Left on parent
-        check_query(49, Some(10), Some(50), None);
-        check_query(50, Some(50), Some(100), None);
-        check_query(51, Some(50), Some(100), None);
+        // Min at parent
+        check_query(-2, InsertionPoint::Minimum(&mut 0, Some(&mut 1)), None);
+        check_query(20, InsertionPoint::Intermediate(&mut 50), None);
+        check_query(5, InsertionPoint::Intermediate(&mut 6), None);
+        // Max at parent
+        check_query(160, InsertionPoint::Intermediate(&mut 200), None);
+        check_query(205, InsertionPoint::Intermediate(&mut 206), None);
+        check_query(300, InsertionPoint::Maximum(&mut 210), None);
+        // Intermediate at parent
+        check_query(60, InsertionPoint::Intermediate(&mut 100), None);
+        check_query(140, InsertionPoint::Intermediate(&mut 150), None);
+        check_query(105, InsertionPoint::Intermediate(&mut 106), None);
 
         // Split and move into parent
-        check_query(7, Some(7), Some(8), Some(7));
+        check_query(7, InsertionPoint::Intermediate(&mut 8), Some(7));
         helper_assert_elements(&node, vec![5, 50, 150]);
         helper_assert_children_first_element(&node, vec![0, 6, 100, 200]);
 
