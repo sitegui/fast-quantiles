@@ -101,7 +101,6 @@ impl<T: Ord + Clone> Summary<T> {
 
         // Keep the number of saved samples bounded
         if self.samples.len() > self.max_samples as usize {
-            println!("============== compress =================");
             self.compress()
         }
     }
@@ -250,6 +249,8 @@ impl<T: Ord + Clone> Summary<T> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use rand::prelude::*;
+    use rand_pcg::Pcg64;
 
     #[test]
     fn insert_one_by_one_and_query() {
@@ -344,5 +345,46 @@ mod test {
         check_rank(8, 6, 1);
         check_rank(9, 9, 1);
         check_rank(10, 9, 0);
+    }
+
+    #[test]
+    fn compression() {
+        // Local compression should reduce a lot the number of saved samples
+        // For 1 million samples, with a 10% error, a full compression will only
+        // kick in once
+
+        fn count_compressions<I: Iterator<Item = usize>>(iter: I) -> (u64, u64, usize) {
+            let mut num_compressions = 0;
+            let mut summary = Summary::new(0.1);
+
+            let mut prev_samples_len = 0;
+            for i in iter {
+                summary.insert_one(i);
+                let samples_len = summary.samples.len();
+                if samples_len < prev_samples_len {
+                    num_compressions += 1;
+                }
+                prev_samples_len = samples_len;
+            }
+
+            (num_compressions, summary.len, summary.samples.len())
+        };
+
+        // Ascending and descending are both worst case and identical
+        assert_eq!(count_compressions(0..1_000), (0, 1_000, 31));
+        assert_eq!(count_compressions(0..10_000), (0, 10_000, 41));
+        assert_eq!(count_compressions(0..100_000), (1, 100_000, 9));
+        assert_eq!(count_compressions(0..1_000_000), (1, 1_000_000, 19));
+
+        assert_eq!(count_compressions((0..1_000).rev()), (0, 1_000, 31));
+        assert_eq!(count_compressions((0..10_000).rev()), (0, 10_000, 41));
+        assert_eq!(count_compressions((0..100_000).rev()), (1, 100_000, 9));
+        assert_eq!(count_compressions((0..1_000_000).rev()), (1, 1_000_000, 19));
+
+        // Random is much better
+        let mut values = (0..1_000_000).collect::<Vec<_>>();
+        let mut rng = Pcg64::seed_from_u64(17);
+        values.shuffle(&mut rng);
+        assert_eq!(count_compressions(values.into_iter()), (0, 1_000_000, 13));
     }
 }
