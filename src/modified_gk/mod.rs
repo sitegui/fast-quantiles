@@ -3,10 +3,7 @@ mod sample;
 mod samples_compressor;
 
 mod summary;
-mod summary_writer;
 pub use summary::Summary;
-pub use summary_writer::SummaryWriter;
-
 
 #[cfg(test)]
 mod test {
@@ -19,7 +16,6 @@ mod test {
         fn check(epsilon: f64, num: usize) {
             let mut s = Summary::new(epsilon);
             let values = consume_generator(RandomGenerator::new(0.5, 17., num, 17), &mut [&mut s]);
-            println!("{:?}", s);
             check_all_ranks(s, values, epsilon);
         }
 
@@ -46,13 +42,7 @@ mod test {
         let gen = RandomGenerator::new(0.5, 17., 10_000, 17);
         let values = consume_generator(gen, &mut [&mut s1, &mut s2]);
 
-        println!("Before merge");
-        println!("{:?}", s1);
-        println!("{:?}", s2);
-
-        println!("After merge");
         s1.merge(s2);
-        println!("{:?}", s1);
 
         check_all_ranks(s1, values, epsilon);
     }
@@ -88,9 +78,6 @@ mod test {
         s5.merge(s7);
         s1.merge(s5);
 
-        println!("After merge");
-        println!("{:?}", s1);
-
         check_all_ranks(s1, values, epsilon);
     }
 
@@ -125,9 +112,6 @@ mod test {
         s1.merge(s7);
         s1.merge(s8);
 
-        println!("After merge");
-        println!("{:?}", s1);
-
         check_all_ranks(s1, values, epsilon);
     }
 
@@ -160,11 +144,13 @@ mod test {
             }
             assert!(
                 error.abs() <= epsilon,
-                "desired_rank={}, queried={}, got_rank={}, error={}",
+                "desired_rank={}, queried={}, got_rank={}, error={}, values={:?}, summary={:?}",
                 desired_rank,
                 queried.into_inner(),
                 got_rank,
-                error
+                error,
+                values,
+                s.samples_spec()
             );
         }
         println!("max_error={:?}", max_error);

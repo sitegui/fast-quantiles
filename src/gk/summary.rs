@@ -67,18 +67,95 @@ impl<T: Ord> Summary<T> {
     }
 
     /// Merge another summary into this oen
-    pub fn merge(&mut self, mut other: Summary<T>) {
-        assert_eq!(
-            self.epsilon, other.epsilon,
-            "Both Summary epsilons must be the same"
-        );
+    pub fn merge(&mut self, other: Summary<T>) {
+        // The GK algorithm is a bit unclear about it, but we need to adjust the statistics during the
+        // merging. The main idea is that samples that come from one side will suffer from the lack of
+        // precision of the other.
+        // As a concrete example, take two QuantileSummaries whose samples (value, g, delta) are:
+        // `a = [(0, 1, 0), (20, 99, 0)]` and `b = [(10, 1, 0), (30, 49, 0)]`
+        // This means `a` has 100 values, whose minimum is 0 and maximum is 20,
+        // while `b` has 50 values, between 10 and 30.
+        // The resulting samples of the merge will be:
+        // a+b = [(0, 1, 0), (10, 1, ??), (20, 99, ??), (30, 49, 0)]
+        // The values of `g` do not change, as they represent the minimum number of values between two
+        // consecutive samples. The values of `delta` should be adjusted, however.
+        // Take the case of the sample `10` from `b`. In the original stream, it could have appeared
+        // right after `0` (as expressed by `g=1`) or right before `20`, so `delta=99+0-1=98`.
+        // In the GK algorithm's style of working in terms of maximum bounds, one can observe that the
+        // maximum additional uncertainty over samples comming from `b` is `max(g_a + delta_a) =
+        // floor(2 * eps_a * n_a)`. Likewise, additional uncertainty over samples from `a` is
+        // `floor(2 * eps_b * n_b)`.
+        // Only samples that interleave the other side are affected. That means that samples from
+        // one side that are lesser (or greater) than all samples from the other side are just copied
+        // unmodifed.
+        // If the merging instances have different `relativeError`, the resulting instance will cary
+        // the largest one: `eps_ab = max(eps_a, eps_b)`.
+        // The main invariant of the GK algorithm is kept:
+        // `max(g_ab + delta_ab) <= floor(2 * eps_ab * (n_a + n_b))` since
+        // `max(g_ab + delta_ab) <= floor(2 * eps_a * n_a) + floor(2 * eps_b * n_b)`
+        // Finally, one can see how the `insert(x)` operation can be expressed as `merge([(x, 1, 0])`
 
-        // Add all other samples and sort by value
-        self.compress();
-        other.compress();
-        self.len += other.len;
-        self.samples.extend(other.samples);
-        self.samples.sort();
+        let mut merged_samples = Vec::with_capacity(self.samples.len() + other.samples.len());
+        let merged_epsilon = self.epsilon.max(other.epsilon);
+        let merged_len = self.len + other.len;
+        let additional_self_delta = (2. * other.epsilon * other.len as f64).floor() as u64;
+        let additional_other_delta = (2. * self.epsilon * self.len as f64).floor() as u64;
+
+        // Do a merge of two sorted lists until one of the lists is fully consumed
+        let mut self_samples = std::mem::replace(&mut self.samples, Vec::new())
+            .into_iter()
+            .peekable();
+        let mut other_samples = other.samples.into_iter().peekable();
+        let mut started_self = false;
+        let mut started_other = false;
+        loop {
+            match (self_samples.peek(), other_samples.peek()) {
+                (Some(self_sample), Some(other_sample)) => {
+                    // Detect next sample
+                    let (next_sample, additional_delta) = if self_sample.value < other_sample.value
+                    {
+                        started_self = true;
+                        (
+                            self_samples.next().unwrap(),
+                            if started_other {
+                                additional_self_delta
+                            } else {
+                                0
+                            },
+                        )
+                    } else {
+                        started_other = true;
+                        (
+                            other_samples.next().unwrap(),
+                            if started_self {
+                                additional_other_delta
+                            } else {
+                                0
+                            },
+                        )
+                    };
+
+                    // Insert it
+                    let next_sample = Sample {
+                        value: next_sample.value,
+                        g: next_sample.g,
+                        delta: next_sample.delta + additional_delta,
+                        band: 0,
+                    };
+                    merged_samples.push(next_sample);
+                }
+                _ => break,
+            }
+        }
+
+        // Copy the remaining samples from the other list
+        // (by construction, at most one `while` loop will run)
+        merged_samples.extend(self_samples);
+        merged_samples.extend(other_samples);
+
+        self.samples = merged_samples;
+        self.epsilon = merged_epsilon;
+        self.len = merged_len;
         self.compress();
     }
 
