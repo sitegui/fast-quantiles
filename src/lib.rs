@@ -1,8 +1,3 @@
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-
-mod btree;
 pub mod gk;
 pub mod modified_gk;
 pub mod quantile_generator;
