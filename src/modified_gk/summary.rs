@@ -1,14 +1,14 @@
 use super::incoming_merge_state::IncomingMergeState;
 use super::sample::Sample;
 use super::samples_compressor::SamplesCompressor;
-use crate::btree::{BTree, InsertionPoint};
+use super::samples_tree::SamplesTree;
 use crate::quantile_to_rank;
 
 /// Implement a modified version of the algorithm by Greenwald and Khanna in
 /// Space-Efficient Online Computation of Quantile Summaries
 /// TODO: describe the diferences and explain why
-pub struct Summary<T: Ord + Clone> {
-    samples: BTree<Sample<T>>,
+pub struct Summary<T: Ord> {
+    samples_tree: SamplesTree<T>,
     /// Maximum number of samples to keep
     max_samples: u64,
     /// Maximum error
@@ -17,12 +17,12 @@ pub struct Summary<T: Ord + Clone> {
     len: u64,
 }
 
-impl<T: Ord + Clone> Summary<T> {
+impl<T: Ord> Summary<T> {
     /// Create a new empty Summary
     pub fn new(max_expected_error: f64) -> Summary<T> {
         let expected_least_compressed_samples = (1. / max_expected_error).ceil() as u64;
         Summary {
-            samples: BTree::new(),
+            samples_tree: SamplesTree::new(),
             // This encodes a tradeoff between using more memory and compressing more frequently.
             // However, with the implemented micro-compression at every insert, in the worst case
             // (sorted stream of values), the structure will accumulate all of the `F=1/eps` first
@@ -44,63 +44,13 @@ impl<T: Ord + Clone> Summary<T> {
 
     /// Insert a single new value into the Summary
     pub fn insert_one(&mut self, value: T) {
-        // General case
-        let search_sample = Sample::exact(value.clone());
-
         self.len += 1;
         let cap = self.max_g_delta();
 
-        self.samples.try_insert(&search_sample, |insertion_point| {
-            match insertion_point {
-                // First value
-                InsertionPoint::Empty => Some(Sample::exact(value)),
-                // New minimum
-                InsertionPoint::Minimum(min, mut after_min) => {
-                    debug_assert_eq!(min.g, 1);
-                    debug_assert_eq!(min.delta, 0);
-                    match &mut after_min {
-                        Some(after_min) if after_min.delta + after_min.g + 1 <= cap => {
-                            // Merge previous `min` into `after_min` and replace it
-                            after_min.g += 1;
-                            min.value = value;
-                            None
-                        }
-                        _ => {
-                            // Insert
-                            Some(Sample::exact(value))
-                        }
-                    }
-                }
-                // New maximum
-                InsertionPoint::Maximum(max) => {
-                    debug_assert_eq!(max.delta, 0);
-                    if max.g + 1 <= cap {
-                        // Merge previous `max` into this new one
-                        max.g += 1;
-                        max.value = value;
-                        None
-                    } else {
-                        // Insert
-                        Some(Sample::exact(value))
-                    }
-                }
-                // Somewhere in the middle
-                InsertionPoint::Intermediate(right) => {
-                    if right.delta + right.g + 1 <= cap {
-                        // Drop
-                        right.g += 1;
-                        None
-                    } else {
-                        // Insert
-                        let delta = right.g + right.delta - 1;
-                        Some(Sample { value, g: 1, delta })
-                    }
-                }
-            }
-        });
+        self.samples_tree.push_value(value, cap);
 
         // Keep the number of saved samples bounded
-        if self.samples.len() > self.max_samples as usize {
+        if self.samples_tree.len() > self.max_samples as usize {
             self.compress()
         }
     }

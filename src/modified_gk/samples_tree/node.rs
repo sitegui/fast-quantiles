@@ -1,5 +1,5 @@
-use super::NodeCapacity;
-use super::Sample;
+use super::{ChildrenCapacity, NodeCapacity};
+use super::{NodeIter, Sample};
 use sized_chunks::Chunk;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -8,7 +8,7 @@ pub struct SamplesNode<T: Ord> {
 	samples: Chunk<Sample<T>, NodeCapacity>,
 	// Either None for a leaf node or an array with capacity for an owned
 	// reference to all nodes
-	children: Option<Chunk<Box<Self>, typenum::Sum<NodeCapacity, typenum::U1>>>,
+	children: Option<Chunk<Box<Self>, ChildrenCapacity>>,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -202,6 +202,17 @@ impl<T: Ord> SamplesNode<T> {
 		if let Some(children) = &mut self.children {
 			children.insert(pos + 1, Box::new(right_child.unwrap()));
 		}
+	}
+}
+
+impl<T: Ord> IntoIterator for SamplesNode<T> {
+	type Item = Sample<T>;
+	type IntoIter = NodeIter<T>;
+
+	fn into_iter(self) -> Self::IntoIter {
+		let samples_iter = Box::new(self.samples.into_iter());
+		let children_iter = self.children.map(|children| Box::new(children.into_iter()));
+		NodeIter::new(samples_iter, children_iter)
 	}
 }
 

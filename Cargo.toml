@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Guilherme <sitegui@sitegui.com.br>"]
 edition = "2018"
 
+# TODO: add more fields from https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata
+
 [dependencies]
 rand = "0.7.0"
 rand_pcg = "0.2.0"

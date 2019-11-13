@@ -1,0 +1,3 @@
+[build]
+#rustflags = "-Zprofile -Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Zno-landing-pads"
+#incremental = false
