@@ -1,18 +1,9 @@
-use super::sample::Sample;
+use super::NodeCapacity;
+use super::Sample;
 use sized_chunks::Chunk;
-use std::mem;
-use typenum;
-
-// Max number of elements per node (must be odd)
-type NodeCapacity = typenum::U11;
-
-pub struct SamplesTree<T: Ord> {
-	root: SamplesNode<T>,
-	len: usize,
-}
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-struct SamplesNode<T: Ord> {
+pub struct SamplesNode<T: Ord> {
 	// An array with capacity for all elements
 	samples: Chunk<Sample<T>, NodeCapacity>,
 	// Either None for a leaf node or an array with capacity for an owned
@@ -32,40 +23,15 @@ pub enum InsertResult<T: Ord> {
 	PendingSplit(Sample<T>, SamplesNode<T>),
 }
 
-impl<T: Ord> SamplesTree<T> {
-	/// Create a new empty tree
-	pub fn new() -> Self {
-		SamplesTree {
-			root: SamplesNode::new(),
-			len: 0,
-		}
-	}
-
-	/// Insert a new value into the tree.
-	/// This can happen by actually adding it to the tree or by updating
-	/// neighbouring data (micro-compression)
-	pub fn push_value(&mut self, value: T, cap: u64) {
-		if let PushResult::Inserted(insert_result) = self.root.push_value(value, cap, false, None) {
-			self.len += 1;
-			if let InsertResult::PendingSplit(med_element, right_child) = insert_result {
-				// Splitting reached root tree: build new root node
-				let old_root = mem::replace(&mut self.root, SamplesNode::new());
-				self.root =
-					SamplesNode::with_samples(vec![med_element], Some(vec![old_root, right_child]));
-			}
-		}
-	}
-}
-
 impl<T: Ord> SamplesNode<T> {
-	fn new() -> Self {
+	pub fn new() -> Self {
 		SamplesNode {
 			samples: Chunk::new(),
 			children: None,
 		}
 	}
 
-	fn with_samples(samples: Vec<Sample<T>>, children: Option<Vec<SamplesNode<T>>>) -> Self {
+	pub fn with_samples(samples: Vec<Sample<T>>, children: Option<Vec<SamplesNode<T>>>) -> Self {
 		if let Some(children) = &children {
 			assert_eq!(children.len(), samples.len() + 1);
 		}
@@ -78,7 +44,7 @@ impl<T: Ord> SamplesNode<T> {
 	/// Insert a new value into the node or one of its children.
 	/// This can happen by actually adding it to the tree or by updating
 	/// neighbouring data (micro-compression)
-	fn push_value(
+	pub fn push_value(
 		&mut self,
 		value: T,
 		cap: u64,
@@ -237,10 +203,6 @@ impl<T: Ord> SamplesNode<T> {
 			children.insert(pos + 1, Box::new(right_child.unwrap()));
 		}
 	}
-
-	fn len(&self) -> usize {
-		self.samples.len()
-	}
 }
 
 #[cfg(test)]
@@ -329,8 +291,10 @@ mod test {
 	#[test]
 	fn insert_sample() {
 		// Fill node
+		let capacity = NodeCapacity::to_u64() as i32;
+		let med = capacity / 2;
 		let mut node = helper_new_node(vec![], None);
-		for i in 0..11 {
+		for i in 0..capacity {
 			assert_eq!(
 				node.insert_sample(Sample::exact(i as i32), None, i as usize),
 				InsertResult::Inserted
@@ -341,42 +305,59 @@ mod test {
 
 		// Split and add to right
 		assert_eq!(
-			node.insert_sample(Sample::exact(-1), None, 2),
+			node.insert_sample(Sample::exact(-1), None, 1),
 			InsertResult::PendingSplit(
-				Sample::exact(5),
-				helper_new_node(vec![6, 7, 8, 9, 10], None)
+				Sample::exact(med),
+				helper_new_node((med + 1..capacity).collect(), None)
 			)
 		);
-		helper_assert_values(&node, vec![0, 1, -1, 2, 3, 4]);
+		helper_assert_values(&node, vec![0, -1].into_iter().chain(1..med).collect());
 
 		// Split and add to left
 		assert_eq!(
-			node2.insert_sample(Sample::exact(-1), None, 7),
+			node2.insert_sample(Sample::exact(-1), None, (capacity - 1) as usize),
 			InsertResult::PendingSplit(
-				Sample::exact(5),
-				helper_new_node(vec![6, -1, 7, 8, 9, 10], None)
+				Sample::exact(med),
+				helper_new_node(
+					(med + 1..capacity - 1)
+						.chain(vec![-1, capacity - 1].into_iter())
+						.collect(),
+					None
+				)
 			)
 		);
-		helper_assert_values(&node2, vec![0, 1, 2, 3, 4]);
+		helper_assert_values(&node2, (0..med).collect());
 	}
 
 	#[test]
 	fn insert_sample_non_leaf() {
-		let elements = (0..11).collect();
-		let children: Vec<SamplesNode<_>> =
-			(20..32).map(|n| helper_new_node(vec![n], None)).collect();
+		let capacity = NodeCapacity::to_u64() as i32;
+		let med = capacity / 2;
+		let elements = (0..capacity).collect();
+		let children: Vec<SamplesNode<_>> = (capacity..2 * capacity + 1)
+			.map(|n| helper_new_node(vec![n], None))
+			.collect();
 		let mut node = helper_new_node(elements, Some(children.clone()));
 
-		let new_value = 100;
-		let new_node = helper_new_node(vec![101], None);
+		let new_value = -1;
+		let new_node = helper_new_node(vec![-2], None);
 		assert_eq!(
-			node.insert_sample(Sample::exact(new_value), Some(new_node), 3),
+			node.insert_sample(Sample::exact(new_value), Some(new_node), 1),
 			InsertResult::PendingSplit(
-				Sample::exact(5),
-				helper_new_node(vec![6, 7, 8, 9, 10], Some(children[6..].to_vec()))
+				Sample::exact(med),
+				helper_new_node(
+					(med + 1..capacity).collect(),
+					Some(children[(med + 1) as usize..].to_vec())
+				)
 			)
 		);
-		helper_assert_values(&node, vec![0, 1, 2, 100, 3, 4]);
-		helper_assert_children_first_values(&node, vec![20, 21, 22, 23, 101, 24, 25]);
+		helper_assert_values(&node, vec![0, -1].into_iter().chain(1..med).collect());
+		helper_assert_children_first_values(
+			&node,
+			vec![capacity, capacity + 1, -2]
+				.into_iter()
+				.chain(capacity + 2..capacity + med + 1)
+				.collect(),
+		);
 	}
 }
