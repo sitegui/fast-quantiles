@@ -1,5 +1,5 @@
 use super::{ChildrenCapacity, NodeCapacity};
-use super::{NodeIter, Sample};
+use super::{IntoIter, Sample};
 use sized_chunks::Chunk;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -207,12 +207,10 @@ impl<T: Ord> SamplesNode<T> {
 
 impl<T: Ord> IntoIterator for SamplesNode<T> {
 	type Item = Sample<T>;
-	type IntoIter = NodeIter<T>;
+	type IntoIter = IntoIter<T>;
 
 	fn into_iter(self) -> Self::IntoIter {
-		let samples_iter = Box::new(self.samples.into_iter());
-		let children_iter = self.children.map(|children| Box::new(children.into_iter()));
-		NodeIter::new(samples_iter, children_iter)
+		IntoIter::new(self.samples, self.children)
 	}
 }
 
