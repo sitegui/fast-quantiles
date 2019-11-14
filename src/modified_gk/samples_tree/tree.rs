@@ -23,15 +23,15 @@ impl<T: Ord> SamplesTree<T> {
 	/// neighbouring data (micro-compression)
 	pub fn push_value(&mut self, value: T, cap: u64) {
 		if let PushResult::Inserted(insert_result) = self.root.push_value(value, cap, false, None) {
-			self.len += 1;
-			if let InsertResult::PendingSplit(med_element, right_child) = insert_result {
-				// Splitting reached root tree: build new root node
-				let old_root = mem::replace(&mut self.root, SamplesNode::new());
-				self.root =
-					SamplesNode::with_samples(vec![med_element], Some(vec![old_root, right_child]));
-				self.depth += 1;
-			}
+			self.handle_insert_result(insert_result);
 		}
+	}
+
+	/// Insert a new sample that is larger than all others currently in the tree.
+	/// This allows for a performant population of the tree from a sorted stream of samples
+	pub fn insert_max_sample(&mut self, sample: Sample<T>) {
+		let result = self.root.insert_max_sample(sample);
+		self.handle_insert_result(result);
 	}
 
 	/// Return the number of stored samples in the whole tree
@@ -42,6 +42,17 @@ impl<T: Ord> SamplesTree<T> {
 	/// Create a iterator over a reference to all the samples in sorted order
 	pub fn iter(&self) -> Iter<T> {
 		self.root.iter(self.depth)
+	}
+
+	fn handle_insert_result(&mut self, insert_result: InsertResult<T>) {
+		self.len += 1;
+		if let InsertResult::PendingSplit(med_element, right_child) = insert_result {
+			// Splitting reached root tree: build new root node
+			let old_root = mem::replace(&mut self.root, SamplesNode::new());
+			self.root =
+				SamplesNode::with_samples(vec![med_element], Some(vec![old_root, right_child]));
+			self.depth += 1;
+		}
 	}
 }
 

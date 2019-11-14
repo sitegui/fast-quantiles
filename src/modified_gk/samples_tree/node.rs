@@ -86,6 +86,26 @@ impl<T: Ord> SamplesNode<T> {
 			}
 		}
 	}
+	/// Insert a new sample that is larger than all others currently in the node.
+	pub fn insert_max_sample(&mut self, sample: Sample<T>) -> InsertResult<T> {
+		match &mut self.children {
+			// Recursively look into its children
+			Some(children) => {
+				let child = children.last_mut().unwrap();
+				match child.insert_max_sample(sample) {
+					InsertResult::PendingSplit(median, right) => {
+						self.insert_sample(median, Some(right), self.samples.len())
+					}
+					x => x,
+				}
+			}
+			// Insertion point found
+			None => {
+				debug_assert!(self.samples.len() == 0 || &sample >= self.samples.last().unwrap());
+				self.insert_sample(sample, None, self.samples.len())
+			}
+		}
+	}
 
 	/// Insert a new value to this leaf node, detecting a possible micro-compression
 	/// oportunity
