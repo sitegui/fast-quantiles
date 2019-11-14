@@ -3,7 +3,7 @@ mod node;
 mod sample;
 mod tree;
 
-pub use iter::IntoIter;
+pub use iter::{IntoIter, Iter};
 pub use sample::Sample;
 pub use tree::SamplesTree;
 use typenum;

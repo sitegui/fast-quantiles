@@ -1,10 +1,11 @@
 use super::node::{InsertResult, PushResult, SamplesNode};
-use super::{IntoIter, Sample};
+use super::{IntoIter, Iter, Sample};
 use std::mem;
 
 pub struct SamplesTree<T: Ord> {
 	root: SamplesNode<T>,
 	len: usize,
+	depth: usize,
 }
 
 impl<T: Ord> SamplesTree<T> {
@@ -13,6 +14,7 @@ impl<T: Ord> SamplesTree<T> {
 		SamplesTree {
 			root: SamplesNode::new(),
 			len: 0,
+			depth: 0,
 		}
 	}
 
@@ -27,6 +29,7 @@ impl<T: Ord> SamplesTree<T> {
 				let old_root = mem::replace(&mut self.root, SamplesNode::new());
 				self.root =
 					SamplesNode::with_samples(vec![med_element], Some(vec![old_root, right_child]));
+				self.depth += 1;
 			}
 		}
 	}
@@ -34,6 +37,11 @@ impl<T: Ord> SamplesTree<T> {
 	/// Return the number of stored samples in the whole tree
 	pub fn len(&self) -> usize {
 		self.len
+	}
+
+	/// Create a iterator over a reference to all the samples in sorted order
+	pub fn iter(&self) -> Iter<T> {
+		self.root.iter(self.depth)
 	}
 }
 
@@ -54,20 +62,22 @@ mod test {
 	use typenum::marker_traits::Unsigned;
 
 	#[test]
-	fn into_iter() {
+	fn iterators() {
 		fn check<T: Ord + Clone + std::fmt::Debug>(mut values: Vec<T>) {
+			// Build tree from exact samples (use cap = 0 to keep all them)
 			let mut tree: SamplesTree<T> = SamplesTree::new();
 			for i in values.iter().cloned() {
 				tree.push_value(i, 0);
 			}
+			assert_eq!(tree.len(), values.len());
+
+			// Collect from by-ref and by-value iterators
+			let collected_by_ref: Vec<T> = tree.iter().map(|sample| sample.value.clone()).collect();
+			let collected_by_value: Vec<T> = tree.into_iter().map(|sample| sample.value).collect();
 
 			values.sort();
-			let tree_collected = tree
-				.into_iter()
-				.map(|sample| sample.value)
-				.collect::<Vec<_>>();
-
-			assert_eq!(values, tree_collected);
+			assert_eq!(values, collected_by_ref);
+			assert_eq!(values, collected_by_value);
 		}
 
 		let capacity = NodeCapacity::to_u64() as i32;

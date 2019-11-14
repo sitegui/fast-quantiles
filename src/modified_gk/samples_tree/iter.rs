@@ -69,3 +69,58 @@ impl<T: Ord> Iterator for IntoIter<T> {
 		}
 	}
 }
+
+pub struct Iter<'a, T: Ord> {
+	// The stack point to the next value to return.
+	// Once empty, iteration is over
+	stack: Vec<(&'a SamplesNode<T>, usize)>,
+}
+
+impl<'a, T: Ord> Iter<'a, T> {
+	pub fn new(node: &'a SamplesNode<T>, tree_depth: usize) -> Self {
+		let stack = Vec::with_capacity(tree_depth);
+		let mut it = Iter { stack };
+		it.descend(node);
+		it
+	}
+
+	fn descend(&mut self, mut node: &'a SamplesNode<T>) {
+		loop {
+			self.stack.push((node, 0));
+			match &node.children {
+				None => break,
+				Some(children) => node = &children[0],
+			}
+		}
+	}
+}
+
+impl<'a, T: Ord> Iterator for Iter<'a, T> {
+	type Item = &'a Sample<T>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		loop {
+			let (last_node, last_pos) = self.stack.last_mut().unwrap();
+			let next = last_node.samples.get(*last_pos);
+
+			match next {
+				Some(_) => {
+					*last_pos += 1;
+					if let Some(children) = &last_node.children {
+						// Walk to next sample of the deepest child
+						let child = &children[*last_pos];
+						self.descend(child);
+					}
+					return next;
+				}
+				None => {
+					// Reached end of the node at the end of the stack
+					self.stack.pop();
+					if self.stack.len() == 0 {
+						return None;
+					}
+				}
+			}
+		}
+	}
+}
