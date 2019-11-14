@@ -1,8 +1,8 @@
 use super::incoming_merge_state::IncomingMergeState;
-use super::sample::Sample;
 use super::samples_compressor::SamplesCompressor;
-use super::samples_tree::SamplesTree;
+use super::samples_tree::{Sample, SamplesTree};
 use crate::quantile_to_rank;
+use std::mem;
 
 /// Implement a modified version of the algorithm by Greenwald and Khanna in
 /// Space-Efficient Online Computation of Quantile Summaries
@@ -51,7 +51,7 @@ impl<T: Ord> Summary<T> {
 
         // Keep the number of saved samples bounded
         if self.samples_tree.len() > self.max_samples as usize {
-            self.compress()
+            self.compress();
         }
     }
 
@@ -61,7 +61,7 @@ impl<T: Ord> Summary<T> {
             other.max_expected_error <= self.max_expected_error,
             "The incoming Summary must have an equal or smaller max_expected_error"
         );
-        self.merge_sorted_samples(other.samples.iter().cloned(), other.len);
+        self.merge_sorted_samples(other.samples_tree.into_iter(), other.len);
     }
 
     /// Query for a desired quantile
@@ -78,7 +78,7 @@ impl<T: Ord> Summary<T> {
         let target_rank = quantile_to_rank(quantile, self.len);
         let mut min_rank = 0;
 
-        self.samples
+        self.samples_tree
             .iter()
             // For each sample, calculate the maximum rank error if we choose it as the answer
             .map(|sample| {
@@ -124,11 +124,12 @@ impl<T: Ord> Summary<T> {
         let mut compressor = SamplesCompressor::new(self.max_g_delta());
 
         // Consume the samples (since T may not implement Copy, we temporally place a zero tree)
-        for sample in self.samples.iter().cloned() {
+        let old_samples_tree = mem::replace(&mut self.samples_tree, SamplesTree::new());
+        for sample in old_samples_tree.into_iter() {
             compressor.push(sample);
         }
 
-        self.samples = compressor.into_samples();
+        self.samples_tree = compressor.into_samples_tree();
     }
 
     /// Merge a source of sorted samples into this Summary
@@ -145,9 +146,8 @@ impl<T: Ord> Summary<T> {
         let mut compressor = SamplesCompressor::new(max_g_delta);
 
         // Get current samples as iterator
-        // Note the use of replace() since T may not implement Copy
-        // Besides, a zero-capacity vector does not call alloc(), that's cool
-        let self_samples = self.samples.iter().cloned();
+        let old_samples_tree = mem::replace(&mut self.samples_tree, SamplesTree::new());
+        let self_samples = old_samples_tree.into_iter();
 
         // Prepare state for merge
         let mut other_input = IncomingMergeState::new(other_samples);
@@ -159,12 +159,12 @@ impl<T: Ord> Summary<T> {
                 // Nothing to merge from one of the sides: move remaining values
                 (None, _) => {
                     other_input.push_remaining_to(&mut compressor);
-                    self.samples = compressor.into_samples();
+                    self.samples_tree = compressor.into_samples_tree();
                     break;
                 }
                 (_, None) => {
                     self_input.push_remaining_to(&mut compressor);
-                    self.samples = compressor.into_samples();
+                    self.samples_tree = compressor.into_samples_tree();
                     break;
                 }
                 (Some(self_peeked), Some(other_peeked)) => {
@@ -189,7 +189,7 @@ impl<T: Ord> Summary<T> {
     where
         T: Copy,
     {
-        self.samples
+        self.samples_tree
             .iter()
             .map(|&sample| (sample.value, sample.g, sample.delta))
             .collect::<Vec<_>>()
@@ -310,14 +310,14 @@ mod test {
             let mut prev_samples_len = 0;
             for i in iter {
                 summary.insert_one(i);
-                let samples_len = summary.samples.len();
+                let samples_len = summary.samples_tree.len();
                 if samples_len < prev_samples_len {
                     num_compressions += 1;
                 }
                 prev_samples_len = samples_len;
             }
 
-            (num_compressions, summary.len, summary.samples.len())
+            (num_compressions, summary.len, summary.samples_tree.len())
         };
 
         // Ascending and descending are both worst case and identical

@@ -1,18 +1,17 @@
-use super::sample::Sample;
-use crate::btree::BTree;
+use super::samples_tree::{Sample, SamplesTree};
 
 /// Helper structure that compress samples as they are given, in sorted order
-pub struct SamplesCompressor<T: Ord + Clone> {
+pub struct SamplesCompressor<T: Ord> {
     max_g_delta: u64,
-    compressed_samples: BTree<Sample<T>>,
+    compressed_samples: SamplesTree<T>,
     block_tail: Option<Sample<T>>,
 }
 
-impl<T: Ord + Clone> SamplesCompressor<T> {
+impl<T: Ord> SamplesCompressor<T> {
     pub fn new(max_g_delta: u64) -> Self {
         SamplesCompressor {
             max_g_delta,
-            compressed_samples: BTree::new(),
+            compressed_samples: SamplesTree::new(),
             block_tail: None,
         }
     }
@@ -24,22 +23,22 @@ impl<T: Ord + Clone> SamplesCompressor<T> {
                 sample.g += tail_sample.g;
             } else {
                 // Commit previous block and start new
-                self.compressed_samples.insert_max(tail_sample);
+                self.compressed_samples.insert_max_sample(tail_sample);
             }
             self.block_tail = Some(sample);
         } else if self.compressed_samples.len() == 0 {
             // Commit minimum
-            self.compressed_samples.insert_max(sample);
+            self.compressed_samples.insert_max_sample(sample);
         } else {
             // Start first block
             self.block_tail = Some(sample);
         }
     }
 
-    pub fn into_samples(mut self) -> BTree<Sample<T>> {
+    pub fn into_samples_tree(mut self) -> SamplesTree<T> {
         if let Some(tail_sample) = self.block_tail {
             // Commit last block
-            self.compressed_samples.insert_max(tail_sample);
+            self.compressed_samples.insert_max_sample(tail_sample);
         }
         self.compressed_samples
     }
@@ -64,7 +63,7 @@ mod test {
 
         assert_eq!(
             compressor
-                .into_samples()
+                .into_samples_tree()
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
@@ -103,7 +102,7 @@ mod test {
             }
             assert_eq!(
                 compressor
-                    .into_samples()
+                    .into_samples_tree()
                     .iter()
                     .cloned()
                     .collect::<Vec<_>>(),

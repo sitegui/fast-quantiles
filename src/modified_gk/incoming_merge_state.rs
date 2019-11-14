@@ -1,14 +1,14 @@
-use super::sample::Sample;
 use super::samples_compressor::SamplesCompressor;
+use super::samples_tree::Sample;
 
 /// Keep metadata about an incoming iterator of sorted samples
-pub struct IncomingMergeState<T: Ord + Clone, I: Iterator<Item = Sample<T>>> {
+pub struct IncomingMergeState<T: Ord, I: Iterator<Item = Sample<T>>> {
     iterator: I,
     next_sample: Option<Sample<T>>,
     has_started: bool,
 }
 
-impl<T: Ord + Clone, I: Iterator<Item = Sample<T>>> IncomingMergeState<T, I> {
+impl<T: Ord, I: Iterator<Item = Sample<T>>> IncomingMergeState<T, I> {
     /// Wrap an iterator
     pub fn new(mut iter: I) -> Self {
         IncomingMergeState {
@@ -90,7 +90,7 @@ mod test {
 
         let mut empty = SamplesCompressor::new(1);
         incoming.push_remaining_to(&mut empty);
-        assert_eq!(empty.into_samples().len(), 0);
+        assert_eq!(empty.into_samples_tree().len(), 0);
     }
 
     #[test]
@@ -105,7 +105,7 @@ mod test {
         incoming.push_remaining_to(&mut empty);
         assert_eq!(
             empty
-                .into_samples()
+                .into_samples_tree()
                 .iter()
                 .map(|sample| sample.value)
                 .collect::<Vec<i32>>(),
